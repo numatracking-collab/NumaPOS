@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { salesService, authService } from '../services/api';
 import { printSaleTicket } from '../services/printerService';
 
@@ -36,9 +37,7 @@ export default function CheckoutModal({
     const [printStatus, setPrintStatus] = useState('idle'); // idle | printing | ok | error | skipped
     const [printError,  setPrintError]  = useState('');
 
-    /* Nombre del cajero — se carga una sola vez al montar.
-       Intenta authService.getUser() si existe; si no, lee el token JWT
-       del sessionStorage y decodifica el payload para sacar el nombre. */
+    /* Nombre del cajero */
     const [cashierName, setCashierName] = useState('');
     useEffect(() => {
         const fromJwt = () => {
@@ -77,6 +76,7 @@ export default function CheckoutModal({
         }
     }, [isOpen]);
 
+    /* ── Cerrar antes de renderizar el portal ── */
     if (!isOpen) return null;
 
     /* ── Procesar venta ─────────────────────────────────────────── */
@@ -127,7 +127,7 @@ export default function CheckoutModal({
             if (printResult.ok) {
                 setPrintStatus('ok');
             } else if (printResult.error === 'No hay impresora con impresión automática habilitada.') {
-                setPrintStatus('skipped'); // silencioso: simplemente no hay impresora auto
+                setPrintStatus('skipped');
             } else {
                 setPrintStatus('error');
                 setPrintError(printResult.error);
@@ -157,12 +157,14 @@ export default function CheckoutModal({
     };
 
     /* ════════════════════════════════════════════════════════════════
-       Render
+       Render — portal al body para escapar del stacking context del
+       slide-panel con transform CSS (que atrapaba el z-index del modal)
     ════════════════════════════════════════════════════════════════ */
-    return (
-        <div className="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-center justify-center"
-             style={{ padding: '1rem' }}>
-            <div className="w-[480px] max-h-[90vh] rounded-[28px] bg-white shadow-2xl flex flex-col overflow-hidden">
+    return ReactDOM.createPortal(
+        /* En móvil: bottom-sheet (sube desde abajo, full-width, esquinas
+           superiores redondeadas). En escritorio: dialog centrado. */
+        <div className="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-end md:items-center justify-center md:p-4">
+            <div className="w-full md:w-[480px] max-h-[92dvh] md:max-h-[90vh] rounded-t-[28px] md:rounded-[28px] bg-white shadow-2xl flex flex-col overflow-hidden">
 
                 {/* ── Header ── */}
                 <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
@@ -365,7 +367,8 @@ export default function CheckoutModal({
                     )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }
 

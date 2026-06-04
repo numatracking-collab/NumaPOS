@@ -26,14 +26,45 @@ export default function SettingsPage() {
         <h1 className="font-semibold text-on-surface text-base">Ajustes</h1>
       </header>
 
-      {/* ── Cuerpo: sidebar + contenido ────────────────────────────── */}
+      {/* ── Navegación móvil: barra de pestañas horizontal scrollable ──
+          Reemplaza al sidebar de íconos solos (w-14) en pantallas pequeñas.
+          Muestra ícono + texto → accesible sin necesidad de adivinar el ícono. */}
+      <nav className="md:hidden shrink-0 flex overflow-x-auto bg-surface border-b border-outline-variant
+                      px-2 py-1.5 gap-1 custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
+        {MENU_ITEMS.map(item => {
+          const isActive = !item.disabled && activeSection === item.id;
+          return (
+            <button
+              key={item.id}
+              disabled={item.disabled}
+              onClick={() => !item.disabled && setActiveSection(item.id)}
+              className={[
+                'flex items-center gap-2 px-3 py-2 rounded-xl whitespace-nowrap shrink-0 transition-colors',
+                item.disabled
+                  ? 'opacity-35 cursor-not-allowed text-on-surface-variant'
+                  : isActive
+                    ? 'bg-secondary/10 text-secondary'
+                    : 'text-on-surface-variant active:bg-surface-container-high',
+              ].join(' ')}
+            >
+              <span
+                className="material-symbols-outlined text-[18px]"
+                style={{ fontVariationSettings: isActive ? "'FILL' 1" : "'FILL' 0" }}
+              >
+                {item.icon}
+              </span>
+              <span className="text-[13px] font-medium">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* ── Cuerpo ─────────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Sidebar izquierdo
-            · Móvil  → solo íconos (w-14 = 56 px)
-            · Tablet/Escritorio → ícono + texto (w-52 = 208 px)       */}
-        <aside className="w-14 md:w-52 shrink-0 bg-surface border-r border-outline-variant
-                          overflow-y-auto custom-scrollbar py-2 flex flex-col gap-0.5">
+        {/* Sidebar izquierdo — solo visible en md+, sin cambios respecto al original */}
+        <aside className="hidden md:flex w-52 shrink-0 bg-surface border-r border-outline-variant
+                          overflow-y-auto custom-scrollbar py-2 flex-col gap-0.5">
           {MENU_ITEMS.map(item => {
             const isActive = !item.disabled && activeSection === item.id;
             return (
@@ -43,7 +74,7 @@ export default function SettingsPage() {
                 title={item.label}
                 onClick={() => !item.disabled && setActiveSection(item.id)}
                 className={[
-                  'flex items-center gap-3 mx-1.5 px-2.5 md:px-3 py-2.5 rounded-xl transition-colors',
+                  'flex items-center gap-3 mx-1.5 px-3 py-2.5 rounded-xl transition-colors',
                   item.disabled
                     ? 'opacity-35 cursor-not-allowed text-on-surface-variant'
                     : isActive
@@ -57,7 +88,7 @@ export default function SettingsPage() {
                 >
                   {item.icon}
                 </span>
-                <span className="hidden md:block text-[13px] font-medium truncate leading-none">
+                <span className="text-[13px] font-medium truncate leading-none">
                   {item.label}
                 </span>
               </button>
