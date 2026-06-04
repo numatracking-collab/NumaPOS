@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@theme {
+  /* Tus colores personalizados del POS */
+  --color-surface-dim: #cbdbf5;
+  --color-on-error: #ffffff;
+  --color-on-primary-container: #7c839b;
+  --color-secondary-fixed: #d8e2ff;
+  --color-outline: #76777d;
+  --color-inverse-primary: #bec6e0;
+  --color-on-background: #0b1c30;
+  --color-inverse-on-surface: #eaf1ff;
+  --color-on-surface-variant: #45464d;
+  --color-on-tertiary: #ffffff;
+  --color-secondary: #0058be;
+  --color-background: #f8f9ff;
+  --color-surface-container-low: #eff4ff;
+  --color-surface-variant: #d3e4fe;
+  --color-on-secondary-fixed-variant: #004395;
+  --color-on-tertiary-container: #009668;
+  --color-tertiary: #000000;
+  --color-surface-container-highest: #d3e4fe;
+  --color-tertiary-container: #002113;
+  --color-error: #ba1a1a;
+  --color-primary-fixed: #dae2fd;
+  --color-tertiary-fixed: #6ffbbe;
+  --color-on-tertiary-fixed: #002113;
+  --color-on-tertiary-fixed-variant: #005236;
+  --color-surface-container-high: #dce9ff;
+  --color-surface-container: #e5eeff;
+  --color-surface-tint: #565e74;
+  --color-secondary-container: #2170e4;
+  --color-on-secondary: #ffffff;
+  --color-primary: #000000;
+  --color-on-error-container: #93000a;
+  --color-secondary-fixed-dim: #adc6ff;
+  --color-tertiary-fixed-dim: #4edea3;
+  --color-surface-container-lowest: #ffffff;
+  --color-on-secondary-container: #fefcff;
+  --color-on-primary-fixed: #131b2e;
+  --color-on-surface: #0b1c30;
+  --color-error-container: #ffdad6;
+  --color-on-secondary-fixed: #001a42;
+  --color-surface: #f8f9ff;
+  --color-on-primary: #ffffff;
+  --color-outline-variant: #c6c6cd;
+  --color-surface-bright: #f8f9ff;
+  --color-primary-fixed-dim: #bec6e0;
+  --color-inverse-surface: #213145;
+  --color-primary-container: #131b2e;
+  --color-on-primary-fixed-variant: #3f465c;
+
+  /* Espaciados y Bordes personalizados */
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-sm: 8px;
+  --spacing-base: 4px;
+  --spacing-touch-target: 44px;
+  --spacing-md: 16px;
+  --spacing-xs: 4px;
+
+  --radius-xl: 0.75rem;
+  --radius-lg: 0.5rem;
+}
+
+/* Tus estilos de scroll y pestañas en CSS puro */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.folder-tab {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+/* Animación para mensajes de error */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
