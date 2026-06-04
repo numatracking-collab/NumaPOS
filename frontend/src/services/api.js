@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:3002/api';
+const VITE_API_URL = 'http://localhost:3002/api';
 
 async function request(endpoint, options = {}) {
     const token = sessionStorage.getItem('numa_token');
