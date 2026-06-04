@@ -332,14 +332,16 @@ function DeviceCard({ device, status, onEdit, onRemove, onRefresh }) {
         </div>
       </div>
 
-      {/* Acciones */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Acciones
+          · Móvil  (< md): siempre visibles — el hover no existe en touch
+          · Desktop (md+): aparecen al hover, igual que antes              */}
+      <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
         {/* Solo Bluetooth puede re-pinguear manualmente */}
         {isBT && (
           <button
             onClick={onRefresh}
             title="Verificar conexión"
-            className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container transition-colors"
+            className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container active:bg-surface-container transition-colors"
           >
             <span className={`material-symbols-outlined text-[17px] ${status === 'checking' ? 'animate-spin' : ''}`}>
               sync
@@ -349,14 +351,14 @@ function DeviceCard({ device, status, onEdit, onRemove, onRefresh }) {
         <button
           onClick={onEdit}
           title="Editar"
-          className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container transition-colors"
+          className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container active:bg-surface-container transition-colors"
         >
           <span className="material-symbols-outlined text-[17px]">edit</span>
         </button>
         <button
           onClick={onRemove}
           title="Eliminar"
-          className="p-1.5 rounded-lg text-on-surface-variant hover:bg-error/10 hover:text-error transition-colors"
+          className="p-1.5 rounded-lg text-on-surface-variant hover:bg-error/10 hover:text-error active:bg-error/10 active:text-error transition-colors"
         >
           <span className="material-symbols-outlined text-[17px]">delete</span>
         </button>
