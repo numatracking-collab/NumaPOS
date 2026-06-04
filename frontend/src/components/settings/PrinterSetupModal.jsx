@@ -1,131 +1,10 @@
 import { useState, useEffect } from 'react';
-import { cacheBtDevice } from '../../services/printerService';
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   UTILIDADES ESC/POS
-   Construye un Uint8Array con los comandos para imprimir en térmica
-═══════════════════════════════════════════════════════════════════════════ */
-
-/** Codifica texto Latin-1 (ISO-8859-1) a bytes — soporta español */
-function encodeText(str) {
-  const bytes = [];
-  for (let i = 0; i < str.length; i++) {
-    const code = str.charCodeAt(i);
-    bytes.push(code <= 0xFF ? code : 0x3F); // '?' para caracteres fuera de rango
-  }
-  return bytes;
-}
-
-/**
- * Construye el ticket de prueba "Hola Mundo" en ESC/POS.
- * @param {string} name   Nombre del dispositivo
- * @param {string} width  '58' | '80'
- */
-function buildTestTicket(name, width) {
-  const ESC = 0x1B;
-  const GS = 0x1D;
-  const LF = 0x0A;
-
-  const cmd = [
-    // Inicializar impresora
-    ESC, 0x40,
-    // Seleccionar charset Latin-1 (página 1)
-    ESC, 0x74, 0x01,
-    // Centrar
-    ESC, 0x61, 0x01,
-    // Doble ancho + doble alto
-    GS, 0x21, 0x11,
-    ...encodeText('Hola Mundo'), LF,
-    // Tamaño normal
-    GS, 0x21, 0x00,
-    // Separador
-    ...encodeText('--------------------------------'), LF,
-    // Alinear izquierda
-    ESC, 0x61, 0x00,
-    ...encodeText(`Dispositivo : ${name}`), LF,
-    ...encodeText(`Ancho papel : ${width} mm`), LF,
-    ...encodeText('Prueba de impresion ESC/POS'), LF,
-    // Tres saltos de línea antes del corte
-    LF, LF, LF,
-    // Corte parcial
-    GS, 0x56, 0x01,
-  ];
-
-  return new Uint8Array(cmd);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   UUID del servicio SPP / BLE serie genérico
-   · SSP clásico: 00001101-0000-1000-8000-00805f9b34fb
-   · Alternativa BLE usada por muchas térmicas chinas:
-       000018f0-0000-1000-8000-00805f9b34fb  (write chr: 00002af1...)
-   Probamos primero la variante BLE, luego SPP clásico.
-═══════════════════════════════════════════════════════════════════════════ */
-const BLE_SERVICE = '000018f0-0000-1000-8000-00805f9b34fb';
-const BLE_WRITE_CHR = '00002af1-0000-1000-8000-00805f9b34fb';
-const SPP_SERVICE = '00001101-0000-1000-8000-00805f9b34fb';
-
-/**
- * Envía bytes a la impresora BT.
- * Intenta BLE primero (characteristic de escritura), luego SPP.
- * @param {BluetoothDevice} device
- * @param {Uint8Array} data
- */
-async function sendToPrinter(device, data) {
-  let server;
-  try {
-    server = await device.gatt.connect();
-  } catch (e) {
-    throw new Error(`No se pudo conectar al GATT: ${e.message}`);
-  }
-
-  /* ── Intento 1: servicio BLE propietario ── */
-  try {
-    const service = await server.getPrimaryService(BLE_SERVICE);
-    const chr = await service.getCharacteristic(BLE_WRITE_CHR);
-    // Enviar en chunks de 512 bytes (límite BLE)
-    const CHUNK = 512;
-    for (let i = 0; i < data.length; i += CHUNK) {
-      await chr.writeValueWithoutResponse(data.slice(i, i + CHUNK));
-    }
-    server.disconnect();
-    return;
-  } catch { /* servicio BLE no disponible, intentar SPP */ }
-
-  /* ── Intento 2: SPP clásico ── */
-  try {
-    const service = await server.getPrimaryService(SPP_SERVICE);
-    // El characteristic de escritura varía; buscamos uno con writeWithoutResponse o write
-    const characteristics = await service.getCharacteristics();
-    const writeable = characteristics.find(c =>
-      c.properties.writeWithoutResponse || c.properties.write
-    );
-    if (!writeable) throw new Error('No se encontró un characteristic de escritura en el servicio SPP.');
-    const CHUNK = 512;
-    for (let i = 0; i < data.length; i += CHUNK) {
-      if (writeable.properties.writeWithoutResponse) {
-        await writeable.writeValueWithoutResponse(data.slice(i, i + CHUNK));
-      } else {
-        await writeable.writeValue(data.slice(i, i + CHUNK));
-      }
-    }
-    server.disconnect();
-    return;
-  } catch (e) {
-    server.disconnect();
-    throw new Error(`No se pudo escribir en la impresora: ${e.message}`);
-  }
-}
+import { cacheBtDevice, sendToPrinterDirect, PRINTER_SERVICE_UUIDS } from '../../services/printerService';
+import { buildTestTicket } from '../../services/ticketBuilder';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Recuperar referencia BT guardada sin pedir al usuario que reseleccione
 ═══════════════════════════════════════════════════════════════════════════ */
-/**
- * Busca el dispositivo BT previamente autorizado por su nombre o id guardado.
- * Requiere el permiso 'bluetooth' persistente (Chrome 85+).
- * @param {string} address   device.id o device.name guardado
- * @returns {BluetoothDevice|null}
- */
 async function getStoredBtDevice(address) {
   if (!navigator.bluetooth?.getDevices) return null;
   const devices = await navigator.bluetooth.getDevices();
@@ -196,12 +75,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
       }
       const device = await navigator.bluetooth.requestDevice({
         acceptAllDevices: true,
-        optionalServices: [
-          BLE_SERVICE,                                     // 000018f0 — el que imprime
-          SPP_SERVICE,                                     // 00001101 — fallback (no aplica aquí)
-          '0000fff0-0000-1000-8000-00805f9b34fb',          // presente en tu impresora
-          '0000ff00-0000-1000-8000-00805f9b34fb',          // presente en tu impresora
-        ],
+        optionalServices: PRINTER_SERVICE_UUIDS,
       });
       setBtDevice(device);
       setAddress(device.id ?? device.name ?? '');
@@ -223,7 +97,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
       if (connectionType === 'bluetooth') {
         if (!btDevice) throw new Error('No hay dispositivo Bluetooth vinculado.');
         const ticket = buildTestTicket(printerName, ticketWidth);
-        await sendToPrinter(btDevice, ticket);
+        await sendToPrinterDirect(btDevice, ticket);
       } else {
         /* Windows: no hay acceso directo desde el navegador.
            El ticket se abre en una ventana de impresión del sistema. */
