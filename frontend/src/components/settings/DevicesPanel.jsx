@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import PrinterSetupModal from './PrinterSetupModal';
+import { cacheBtDevice } from '../../services/printerService';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Constantes
@@ -41,78 +42,87 @@ export default function DevicesPanel() {
   }, []);
 
   /* ── Ping Bluetooth ──────────────────────────────────────────────
-     Intenta conectar al GATT del dispositivo; si responde → online.
-     Si el dispositivo es Windows → siempre 'online'.
+     Verifica si el dispositivo está alcanzable.
+     IMPORTANTE: NO llamamos disconnect() después de conectar.
+     Dos razones:
+       1. gatt.connect() es idempotente — si printerService ya tiene
+          una conexión abierta, este call la reutiliza sin interrumpirla.
+       2. Mantener la conexión activa pre-calienta el canal para que
+          la impresión sea más rápida al cerrar una venta.
   ─────────────────────────────────────────────────────────────────── */
   const pingDevice = useCallback(async (device) => {
-    if (device.connectionType === 'windows') {
-      setStatusMap(prev => ({ ...prev, [device.id]: 'online' }));
-      return;
-    }
+  if (device.connectionType === 'windows') {
+    setStatusMap(prev => ({ ...prev, [device.id]: 'online' }));
+    return;
+  }
 
-    /* Bluetooth */
-    if (!navigator.bluetooth) {
+  if (!navigator.bluetooth) {
+    setStatusMap(prev => ({ ...prev, [device.id]: 'unknown' }));
+    return;
+  }
+
+  setStatusMap(prev => ({ ...prev, [device.id]: 'checking' }));
+
+  try {
+    const knownDevices = await navigator.bluetooth.getDevices?.() ?? [];
+    const found = knownDevices.find(
+      d => d.id === device.address || d.name === device.address
+    );
+
+    if (!found) {
       setStatusMap(prev => ({ ...prev, [device.id]: 'unknown' }));
       return;
     }
 
-    setStatusMap(prev => ({ ...prev, [device.id]: 'checking' }));
-    try {
-      /*
-        navigator.bluetooth.getDevices() devuelve solo dispositivos
-        que el usuario ya autorizó en esta sesión u otras.
-        Si el dispositivo está en el rango y responde → online.
-      */
-      const knownDevices = await navigator.bluetooth.getDevices?.() ?? [];
-      const found = knownDevices.find(
-        d => d.id === device.address || d.name === device.address
-      );
-
-      if (!found) {
-        /* No hay referencia al dispositivo en esta sesión → unknown */
-        setStatusMap(prev => ({ ...prev, [device.id]: 'unknown' }));
-        return;
-      }
-
-      /* Intenta conectar GATT para verificar que está alcanzable */
-      const server = await found.gatt.connect();
-      setStatusMap(prev => ({ ...prev, [device.id]: 'online' }));
-      /* Desconectar inmediatamente, solo queríamos el ping */
-      server.disconnect();
-    } catch {
-      setStatusMap(prev => ({ ...prev, [device.id]: 'offline' }));
+    // Desconectar si hay conexión rota antes de reconectar
+    if (!found.gatt.connected) {
+      try { found.gatt.disconnect(); } catch { /* noop */ }
+      await new Promise(r => setTimeout(r, 500));
     }
-  }, []);
+
+    // Conectar y cachear la referencia viva
+    await found.gatt.connect();
+    cacheBtDevice(device.address, found);
+    console.info(`[Printer] Reconectado y cacheado: ${device.name}`);
+    setStatusMap(prev => ({ ...prev, [device.id]: 'online' }));
+
+  } catch {
+    setStatusMap(prev => ({ ...prev, [device.id]: 'offline' }));
+  }
+}, []);
 
   /* ── Arrancar/detener ping por cada dispositivo ─────────────────── */
-  useEffect(() => {
-    const existingIds = new Set(devices.map(d => d.id));
+ // ── Al cargar: intentar reconectar impresoras BT automáticamente ──────
+useEffect(() => {
+  const reconnectPrinters = async () => {
+    if (!navigator.bluetooth?.getDevices) return;
 
-    /* Limpiar timers de dispositivos eliminados */
-    Object.keys(pingTimersRef.current).forEach(id => {
-      if (!existingIds.has(id)) {
-        clearInterval(pingTimersRef.current[id]);
-        delete pingTimersRef.current[id];
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem('pos_devices') || '[]'); } catch { return; }
+
+    const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
+    if (btPrinters.length === 0) return;
+
+    try {
+      const known = await navigator.bluetooth.getDevices();
+      for (const printer of btPrinters) {
+        const found = known.find(d => d.id === printer.address || d.name === printer.address);
+        if (found) {
+          // Pre-conectar para calentar el canal GATT
+          try {
+            await found.gatt.connect();
+            cacheBtDevice(printer.address, found);
+            console.info(`[Printer] Pre-conectado: ${printer.name}`);
+          } catch (e) {
+            console.warn(`[Printer] Pre-conexión falló para ${printer.name}:`, e.message);
+          }
+        }
       }
-    });
+    } catch { /* noop */ }
+  };
 
-    /* Arrancar ping para dispositivos nuevos */
-    devices.forEach(device => {
-      if (pingTimersRef.current[device.id]) return; // ya tiene timer
-
-      pingDevice(device); // ping inmediato
-      pingTimersRef.current[device.id] = setInterval(
-        () => pingDevice(device),
-        BT_PING_INTERVAL_MS
-      );
-    });
-
-    return () => {
-      /* Limpieza total al desmontar */
-      Object.values(pingTimersRef.current).forEach(clearInterval);
-      pingTimersRef.current = {};
-    };
-  }, [devices, pingDevice]);
+  reconnectPrinters();
+}, []); // solo al montar
 
   /* ── Guardar (crear o editar) ───────────────────────────────────── */
   const handleSaveDevice = (device) => {
@@ -176,7 +186,11 @@ export default function DevicesPanel() {
             <div className="absolute right-0 mt-1.5 w-52 bg-surface-bright border border-outline-variant
                             rounded-xl shadow-lg z-20 overflow-hidden py-1">
               <button
-                onClick={() => { setShowAddMenu(false); setEditingDevice(null); setShowPrinterModal(true); }}
+                onClick={() => {
+                  setShowAddMenu(false);
+                  setEditingDevice(null);
+                  setShowPrinterModal(true);
+                }}
                 className="flex items-center gap-3 w-full px-4 py-2.5 text-left
                            text-[13px] text-on-surface hover:bg-surface-container transition-colors"
               >
