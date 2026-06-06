@@ -13,6 +13,10 @@ async function getStoredBtDevice(address) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PrinterSetupModal
+   Props:
+     existingDevice  – objeto del dispositivo si se está editando, null si es nuevo
+     onSave(device)  – callback con el objeto listo para guardar
+     onClose()       – callback para cerrar sin guardar
 ═══════════════════════════════════════════════════════════════════════════ */
 export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
 
@@ -95,6 +99,8 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
         const ticket = buildTestTicket(printerName, ticketWidth);
         await sendToPrinterDirect(btDevice, ticket);
       } else {
+        /* Windows: no hay acceso directo desde el navegador.
+           El ticket se abre en una ventana de impresión del sistema. */
         const win = window.open('', '_blank', 'width=300,height=400');
         if (!win) throw new Error('El navegador bloqueó la ventana emergente.');
         win.document.write(`
@@ -126,6 +132,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
   };
 
   /* ── Guardar ── */
+  // Reemplazar handleSave completo:
   const handleSave = () => {
     const saved = {
       id: existingDevice?.id ?? `device_${Date.now()}`,
@@ -137,6 +144,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
       config: { autoPrint, openDrawer, ticketWidth },
     };
 
+    // ← Clave: guardar la referencia BT viva en el caché del servicio
     if (connectionType === 'bluetooth' && btDevice) {
       cacheBtDevice(saved.address, btDevice);
     }
@@ -159,15 +167,13 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
     );
 
   /* ══════════════════════════════════════════════════════════════════
-      Render
-     ══════════════════════════════════════════════════════════════════ */
+     Render
+  ══════════════════════════════════════════════════════════════════ */
   return (
-    // Se cambia z-50 por z-[100] para sobrepasar el BottomNav. El padding inferior rescata al modal del nav en celular.
-    <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center p-4 pb-[84px] md:pb-4">
-      
-      {/* max-h se adapta dinámicamente restando el espacio ocupado por elementos globales de la pantalla */}
-      <div className="bg-surface-bright w-full md:w-[440px] rounded-2xl
-                      border border-outline-variant shadow-xl flex flex-col max-h-[calc(100dvh-100px)] md:max-h-[85dvh] overflow-hidden">
+<div className="fixed inset-0 bg-black/40 z-[200] flex items-end md:items-center justify-center p-0 md:p-6">
+      <div className="bg-surface-bright w-full md:w-[440px] md:rounded-2xl rounded-t-2xl
+                border border-outline-variant shadow-xl flex flex-col max-h-[90dvh] overflow-hidden
+                mb-[76px] md:mb-0">
 
         {/* Header */}
         <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-outline-variant shrink-0">
@@ -185,18 +191,18 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
             style={{ fontVariationSettings: "'FILL' 1" }}>
             receipt_long
           </span>
-          <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-on-surface text-[15px] leading-tight truncate">
+          <div className="flex-1">
+            <h3 className="font-semibold text-on-surface text-[15px] leading-tight">
               {step === 1 ? 'Agregar impresora de tickets' : existingDevice ? 'Editar impresora' : 'Configurar impresora'}
             </h3>
             {step === 2 && (
-              <p className="text-on-surface-variant text-[11px] mt-0.5 truncate">
+              <p className="text-on-surface-variant text-[11px] mt-0.5">
                 Modelo: POS 5890Z-l · {connectionType === 'bluetooth' ? 'Bluetooth' : 'Cola de impresión Windows'}
               </p>
             )}
           </div>
           <button onClick={onClose}
-            className="p-1 rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant shrink-0">
+            className="p-1 rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant">
             <span className="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
@@ -259,7 +265,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
                         <p className="text-secondary/70 text-[10px]">Vinculado correctamente</p>
                       </div>
                       <button onClick={() => { setBtDevice(null); setAddress(''); }}
-                        className="p-1 rounded-md text-secondary/70 hover:text-error hover:bg-error/10 transition-colors shrink-0">
+                        className="p-1 rounded-md text-secondary/70 hover:text-error hover:bg-error/10 transition-colors">
                         <span className="material-symbols-outlined text-[15px]">close</span>
                       </button>
                     </div>
@@ -367,7 +373,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
 
         {/* Footer */}
         {step === 2 && (
-          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-outline-variant shrink-0 bg-surface-bright">
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-outline-variant shrink-0">
             <button onClick={onClose}
               className="px-4 py-2 text-[13px] text-on-surface-variant
                                hover:bg-surface-container rounded-lg transition-colors">
@@ -403,7 +409,7 @@ function ConnectionOption({ icon, title, description, onClick }) {
         <p className="text-on-surface font-medium text-[13px]">{title}</p>
         <p className="text-on-surface-variant text-[11px] mt-0.5">{description}</p>
       </div>
-      <span className="material-symbols-outlined text-[18px] text-on-surface-variant group-hover:text-secondary transition-colors shrink-0">
+      <span className="material-symbols-outlined text-[18px] text-on-surface-variant group-hover:text-secondary transition-colors">
         chevron_right
       </span>
     </button>
@@ -415,7 +421,7 @@ function FormField({ label, hint, children }) {
     <div className="flex flex-col gap-1.5">
       <label className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wide">{label}</label>
       {children}
-      {hint && <div className="text-on-surface-variant/60 text-[10px] leading-relaxed">{hint}</div>}
+      {hint && <p className="text-on-surface-variant/60 text-[10px] leading-relaxed">{hint}</p>}
     </div>
   );
 }
