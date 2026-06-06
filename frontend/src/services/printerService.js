@@ -8,28 +8,21 @@ import { buildSaleTicket } from './ticketBuilder';
    Ordenados por prioridad: tu Ofichido primero, luego genéricos.
    ──────────────────────────────────────────────────────────────────────── */
 export const PRINTER_PROFILES = [
-  // Ofichido 5890Z-l — perfil primario confirmado por nRF Connect
   { service: '0000fff0-0000-1000-8000-00805f9b34fb', chr: '0000fff2-0000-1000-8000-00805f9b34fb' },
-  // Ofichido — perfil secundario
   { service: '0000ff80-0000-1000-8000-00805f9b34fb', chr: '0000ff82-0000-1000-8000-00805f9b34fb' },
-  // iSAP — también presente en Ofichido
   { service: '49535343-fe7d-4ae5-8fa9-9fafd205e455', chr: '49535343-8841-43f4-a8d4-ecbe34729bb3' },
-  // 18f0 — CSR genérico
   { service: '000018f0-0000-1000-8000-00805f9b34fb', chr: '00002af1-0000-1000-8000-00805f9b34fb' },
-  // Epson BLE
   { service: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', chr: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f' },
 ];
 
 export const PRINTER_SERVICE_UUIDS = PRINTER_PROFILES.map(p => p.service);
 
 /* ── Caché de dispositivos y perfiles ────────────────────────────────── */
-const _deviceCache  = new Map();   // address → BluetoothDevice
-const _profileCache = new Map();   // address → { service, chr }
+const _deviceCache  = new Map();
+const _profileCache = new Map();
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   findWritableCharacteristic
-   Recorre los perfiles conocidos hasta encontrar un characteristic
-   con permisos de escritura en el servidor GATT dado.
+   Helpers internos
    ═══════════════════════════════════════════════════════════════════════════ */
 function withTimeout(promise, ms, label) {
   return Promise.race([
@@ -88,21 +81,14 @@ async function findWritableCharacteristic(server, address) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   ensureConnection
-   Obtiene un GATT server conectado, reutilizando la conexión existente
-   si está activa. Solo reconecta si es estrictamente necesario.
-   ═══════════════════════════════════════════════════════════════════════════ */
 async function ensureConnection(btRef, address) {
-  // Si está conectado, verificar que la conexión sigue viva
   if (btRef.gatt.connected) {
     console.info('[Printer] Conexión GATT activa, reutilizando');
     return btRef.gatt;
   }
 
-  // Desconectar limpiamente antes de reconectar
   try { btRef.gatt.disconnect(); } catch { /* noop */ }
-  await sleep(800); // esperar más tiempo en Android
+  await sleep(800);
 
   let server = null;
   let lastError = null;
@@ -111,7 +97,7 @@ async function ensureConnection(btRef, address) {
     try {
       console.info(`[Printer] Conectando GATT (intento ${attempt}/3)...`);
       server = await btRef.gatt.connect();
-      await sleep(500); // dar tiempo al stack BLE de Android
+      await sleep(500);
       console.info('[Printer] Conexión GATT establecida');
       return server;
     } catch (e) {
@@ -129,19 +115,9 @@ async function ensureConnection(btRef, address) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   writeChunked
-   Envía un Uint8Array en chunks pequeños con pausas entre ellos.
-
-   CLAVE para evitar "GATT operation failed for unknown reason":
-     • Chunks de 100 bytes (muchas térmicas BLE tienen MTU ~100-200)
-     • Pausa de 50ms entre chunks para no saturar el buffer
-     • Prefiere writeValue (con respuesta) sobre writeWithoutResponse
-       para mayor fiabilidad
-   ═══════════════════════════════════════════════════════════════════════════ */
 async function writeChunked(chr, data, btRef, address) {
-  const CHUNK_SIZE = 20;   // MTU mínimo BLE garantizado
-  const CHUNK_DELAY = 120; // ms entre chunks — más lento pero confiable
+  const CHUNK_SIZE  = 20;
+  const CHUNK_DELAY = 120;
   const WRITE_TIMEOUT = 5000;
 
   const useWrite = chr.properties.write;
@@ -164,7 +140,6 @@ async function writeChunked(chr, data, btRef, address) {
 
     let success = false;
 
-    // Intento 1: método preferido
     try {
       if (useWrite) {
         await writeWithTimeout(() => chr.writeValue(chunk));
@@ -175,7 +150,6 @@ async function writeChunked(chr, data, btRef, address) {
     } catch (e) {
       console.warn(`[Printer] Write falló en offset ${offset}:`, e.message);
 
-      // Si el GATT se desconectó a mitad, reconectar y reobtener characteristic
       if (e.message?.includes('disconnected') || e.message?.includes('GATT')) {
         console.info('[Printer] GATT caído a mitad — reconectando...');
         try {
@@ -183,7 +157,7 @@ async function writeChunked(chr, data, btRef, address) {
           await sleep(800);
           const server = await withTimeout(btRef.gatt.connect(), 5000, 'reconexión mid-transfer');
           await sleep(300);
-          _profileCache.delete(address); // forzar re-descubrimiento
+          _profileCache.delete(address);
           chr = await findWritableCharacteristic(server, address);
           console.info('[Printer] Reconectado, reintentando chunk...');
 
@@ -199,7 +173,6 @@ async function writeChunked(chr, data, btRef, address) {
       }
     }
 
-    // Intento 2: método alternativo si el principal falló sin desconexión
     if (!success) {
       try {
         if (useWrite) {
@@ -222,10 +195,9 @@ async function writeChunked(chr, data, btRef, address) {
 
 async function sendBytes(btRef, data, address) {
   const server = await ensureConnection(btRef, address);
-
   try {
     const chr = await findWritableCharacteristic(server, address);
-    await writeChunked(chr, data, btRef, address); // pasar btRef y address para reconexión mid-transfer
+    await writeChunked(chr, data, btRef, address);
   } catch (e) {
     _profileCache.delete(address);
     console.error('[Printer] Error durante envío:', e.message);
@@ -235,13 +207,10 @@ async function sendBytes(btRef, data, address) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    sendToPrinterDirect  —  Envío directo para la prueba del modal
-   Usa la misma lógica de perfiles que sendBytes.
-   Exportada para que PrinterSetupModal la use.
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function sendToPrinterDirect(btDevice, data) {
   let server;
 
-  // Conectar (o reutilizar conexión existente)
   if (btDevice.gatt.connected) {
     server = btDevice.gatt;
   } else {
@@ -253,7 +222,6 @@ export async function sendToPrinterDirect(btDevice, data) {
     }
   }
 
-  // Buscar characteristic usando los mismos perfiles
   const address = btDevice.id ?? btDevice.name ?? 'test';
   const chr = await findWritableCharacteristic(server, address);
   await writeChunked(chr, data);
@@ -270,7 +238,6 @@ async function getActivePrinter() {
   if (!printer) return null;
   if (printer.connectionType === 'windows') return { device: printer, btRef: null };
 
-  // Buscar referencia BT viva
   let btRef = _deviceCache.get(printer.address) ?? null;
 
   if (!btRef && navigator.bluetooth?.getDevices) {
@@ -279,7 +246,6 @@ async function getActivePrinter() {
       btRef = known.find(d =>
         d.id === printer.address || d.name === printer.address
       ) ?? null;
-
       if (btRef) {
         _deviceCache.set(printer.address, btRef);
         console.info('[Printer] Dispositivo recuperado via getDevices()');
@@ -292,9 +258,31 @@ async function getActivePrinter() {
   return { device: printer, btRef };
 }
 
+/* ── Utilidad interna: construir saleData y enviar a la impresora ─────── */
+async function _sendTicket(saleData, device, btRef) {
+  const width = device.config?.ticketWidth ?? '58';
+  const bytes = buildSaleTicket(saleData, width);
+
+  if (device.connectionType === 'bluetooth') {
+    if (!btRef) {
+      return {
+        ok: false,
+        error: 'Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.',
+      };
+    }
+    await sendBytes(btRef, bytes, device.address);
+    return { ok: true };
+  }
+
+  if (device.connectionType === 'windows') {
+    return { ok: true };
+  }
+
+  return { ok: false, error: 'Tipo de conexión no reconocido.' };
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
-   printSaleTicket  —  Imprime el ticket de venta automáticamente
-   Llamada desde CheckoutModal tras procesar la venta.
+   printSaleTicket  —  Imprime al terminar una NUEVA venta (desde CheckoutModal)
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function printSaleTicket(saleResponse, extra = {}) {
   try {
@@ -302,46 +290,65 @@ export async function printSaleTicket(saleResponse, extra = {}) {
     if (!result) return { ok: false, error: 'No hay impresora con impresión automática habilitada.' };
 
     const { device, btRef } = result;
-    const width = device.config?.ticketWidth ?? '58';
 
     const saleData = {
-      folio:          saleResponse.folio          ?? '',
-      created_at:     saleResponse.sale?.created_at ?? new Date().toISOString(),
-      payment_method: extra.paymentMethod          ?? saleResponse.payment_method ?? 'cash',
-      amount_paid:    extra.amountPaid             ?? saleResponse.amount_paid    ?? extra.total ?? 0,
-      change:         saleResponse.change          ?? 0,
-      total:          extra.total                  ?? 0,
-      subtotal:       extra.total                  ?? 0,
+      folio:          saleResponse.folio              ?? '',
+      created_at:     saleResponse.sale?.created_at   ?? new Date().toISOString(),
+      payment_method: extra.paymentMethod             ?? saleResponse.payment_method ?? 'cash',
+      amount_paid:    extra.amountPaid                ?? saleResponse.amount_paid    ?? extra.total ?? 0,
+      change:         saleResponse.change             ?? 0,
+      total:          extra.total                     ?? 0,
+      subtotal:       extra.total                     ?? 0,
       discount:       0,
-      items:          (extra.cart ?? []).map(i => ({
+      items: (extra.cart ?? []).map(i => ({
         sku:      i.sku      ?? '',
         name:     i.name     ?? '',
         quantity: i.quantity ?? 1,
         price:    i.price    ?? 0,
       })),
-      cashier:        extra.cashier  ?? '',
-      caja:           extra.caja     ?? '',
+      cashier: extra.cashier ?? '',
+      caja:    extra.caja    ?? '',
     };
 
-    const bytes = buildSaleTicket(saleData, width);
+    return await _sendTicket(saleData, device, btRef);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
 
-    if (device.connectionType === 'bluetooth') {
-      if (!btRef) {
-        return {
-          ok: false,
-          error: 'Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.',
-        };
-      }
-      await sendBytes(btRef, bytes, device.address);
-      return { ok: true };
-    }
+/* ═══════════════════════════════════════════════════════════════════════════
+   reprintSaleTicket  —  Reimprime desde el Historial de ventas
+   Acepta el objeto sale + items tal como los devuelve salesService.get(id).
+   ═══════════════════════════════════════════════════════════════════════════ */
+export async function reprintSaleTicket(sale, items = []) {
+  try {
+    const result = await getActivePrinter();
+    if (!result) return { ok: false, error: 'No hay impresora con impresión automática habilitada.' };
 
-    if (device.connectionType === 'windows') {
-      // Impresión Windows vía ventana emergente
-      return { ok: true };
-    }
+    const { device, btRef } = result;
 
-    return { ok: false, error: 'Tipo de conexión no reconocido.' };
+    const total = Number(sale.total_amount ?? 0);
+
+    const saleData = {
+      folio:          sale.folio          ?? '',
+      created_at:     sale.created_at     ?? new Date().toISOString(),
+      payment_method: sale.payment_method ?? 'cash',
+      amount_paid:    total,                          // en reimpresión no tenemos el monto pagado
+      change:         0,
+      total,
+      subtotal:       total,
+      discount:       0,
+      items: items.map(i => ({
+        sku:      i.sku        ?? '',
+        name:     i.name       ?? '',
+        quantity: Number(i.quantity   ?? 1),
+        price:    Number(i.unit_price ?? 0),          // campo del detalle de venta
+      })),
+      cashier: sale.cashier_name ?? sale.user_name ?? '',
+      caja:    sale.caja_name    ?? '',
+    };
+
+    return await _sendTicket(saleData, device, btRef);
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -349,7 +356,6 @@ export async function printSaleTicket(saleResponse, extra = {}) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    cacheBtDevice  —  Guarda referencia viva del dispositivo BT
-   Llamada desde PrinterSetupModal y DevicesPanel al vincular/reconectar.
    ═══════════════════════════════════════════════════════════════════════════ */
 export function cacheBtDevice(address, btDevice) {
   if (address && btDevice) _deviceCache.set(address, btDevice);

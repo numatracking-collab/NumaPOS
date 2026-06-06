@@ -4,8 +4,7 @@ import CategoryTabs from '../components/CategoryTabs';
 import ProductCard from '../components/ProductCard';
 import TicketSidebar from '../components/TicketSidebar';
 import BottomNav from '../components/BottomNav';
-import { productService } from '../services/api';
-
+import { inventoryService as productService } from '../services/api';
 const LS_CART = 'numa_pos_cart';
 
 export default function POSPage() {

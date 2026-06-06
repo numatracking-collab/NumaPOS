@@ -5,8 +5,10 @@ import ProductCard from '../components/ProductCard';
 import InventoryDetailPanel from '../components/inventory/InventoryDetailPanel';
 import ProductFormModal from '../components/inventory/ProductFormModal';
 import CategoryManagerModal from '../components/inventory/CategoryManagerModal';
-import { productService, categoryService } from '../services/api';
-
+//  Por esto:
+// 💡 Modifica tu importación para que quede así:
+// 💡 Cambiamos 'categoriesService as categoryService' por simplemente 'categoryService'
+import { inventoryService as productService, categoryService } from '../services/api';
 export default function InventoryPage() {
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
