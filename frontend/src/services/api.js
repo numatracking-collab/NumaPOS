@@ -1,91 +1,107 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
-async function request(endpoint, options = {}) {
-    const token = sessionStorage.getItem('numa_token');
-    const config = {
-        headers: {
-            'Content-Type': 'application/json',
-            ...(token && { Authorization: `Bearer ${token}` }),
-            ...options.headers,
-        },
-        ...options,
-    };
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Error en la solicitud al servidor.');
-    return data;
+/* ═══════════════════════════════════════════════════════════════════════════
+   api.js — Servicios de la API de NUMA POS
+   Un único export por servicio, sin duplicados.
+═══════════════════════════════════════════════════════════════════════════ */
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
+
+/* ── Helpers ─────────────────────────────────────────────────────────── */
+function getToken() {
+    return sessionStorage.getItem('numa_token');
 }
 
-const post = (url, body) => request(url, { method: 'POST', body: JSON.stringify(body) });
-const put  = (url, body) => request(url, { method: 'PUT',  body: JSON.stringify(body) });
-const del  = (url)       => request(url, { method: 'DELETE' });
+function authHeaders() {
+    return {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getToken()}`,
+    };
+}
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+/** Convierte un objeto de parámetros a query string, omitiendo valores vacíos */
+function toQS(params = {}) {
+    const clean = Object.fromEntries(
+        Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
+    );
+    return new URLSearchParams(clean).toString();
+}
+
+async function request(method, path, body) {
+    const res = await fetch(`${API_URL}${path}`, {
+        method,
+        headers: authHeaders(),
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Error ${res.status}`);
+    }
+    return res.json();
+}
+
+/* ── Autenticación ───────────────────────────────────────────────────── */
 export const authService = {
-    register: (data) => post('/auth/register', data),
-    login:    (data) => post('/auth/login', data),
- 
-    // Devuelve el perfil del usuario autenticado.
-    // El backend debe tener GET /auth/me protegido con el token JWT.
-    getUser: () => request('/auth/me'),
-};
- 
-
-// ── Categorías ────────────────────────────────────────────────────────────────
-export const categoryService = {
-    getAll: ()         => request('/categories'),
-    create: (data)     => post('/categories', data),
-    update: (id, data) => put(`/categories/${id}`, data),
-    delete: (id)       => del(`/categories/${id}`),
+    login:    (body) => request('POST', '/auth/login', body),
+    logout:   ()     => request('POST', '/auth/logout'),
+    getUser:  ()     => request('GET',  '/auth/me'),
 };
 
-// ── Productos ─────────────────────────────────────────────────────────────────
-export const productService = {
-    getAll: ()         => request('/products'),
-    create: (data)     => post('/products', data),
-    update: (id, data) => put(`/products/${id}`, data),
-    delete: (id)       => del(`/products/${id}`),
-};
-
-// ── Inventario ────────────────────────────────────────────────────────────────
-export const inventoryService = {
-    getAdjustments: (productId) => request(`/inventory/adjustments/${productId}`),
-    adjust:         (data)      => post('/inventory/adjust', data),
-};
-
-// ── Ventas ────────────────────────────────────────────────────────────────────
+/* ── Ventas ──────────────────────────────────────────────────────────── */
 export const salesService = {
-    // body: { items[], payment_method, amount_paid, caja_id }
-    create: (data)        => post('/sales', data),
-    list:   (params = {}) => request(`/sales?${new URLSearchParams(params)}`),
-    get:    (id)          => request(`/sales/${id}`),
+    list:   (params) => request('GET',  `/sales?${toQS(params)}`),
+    get:    (id)     => request('GET',  `/sales/${id}`),
+    create: (body)   => request('POST', '/sales', body),
 };
 
-// ── Cajas físicas y Cortes ────────────────────────────────────────────────────
+/* ── Inventario / Productos ──────────────────────────────────────────── */
+/* ── Inventario / Productos ──────────────────────────────────────────── */
+export const inventoryService = {
+    getAll:            (params) => request('GET',    `/products?${toQS(params)}`),
+    get:               (id)     => request('GET',    `/products/${id}`),
+    create:            (body)   => request('POST',   '/products', body),
+    update:            (id, b)  => request('PUT',    `/products/${id}`, b),
+    delete:            (id)     => request('DELETE', `/products/${id}`),
+    
+    // Corregidos para apuntar a los endpoints de tu router de inventario
+    getAllAdjustments: (params) => request('GET',    `/inventory/adjustments?${toQS(params)}`),
+    getProductHistory: (productId) => request('GET', `/inventory/adjustments/${productId}`),
+    createAdjustment:  (body)   => request('POST',   '/inventory/adjust', body), // <-- apunta a /inventory/adjust
+};
+/* ── Cajas ───────────────────────────────────────────────────────────── */
+/* ── Cajas ───────────────────────────────────────────────────────────── */
 export const cajasService = {
-    // Cajas físicas
-    getAll: ()     => request('/cash-registers/cajas'),
-    create: (data) => post('/cash-registers/cajas', data),
-
-    // Corte  — body: { caja_id, notes? }
-    corte:     (data)          => post('/cash-registers/corte', data),
-
-    // Historial de cortes  — opcional: { caja_id }
-    getCortes: (params = {})   => request(`/cash-registers/cortes?${new URLSearchParams(params)}`),
-
-    // Preview del próximo corte sin guardarlo
-    preview:   (caja_id)       => request(`/cash-registers/preview?caja_id=${caja_id}`),
+    // 💡 Añadimos '/cajas' al final para que coincida con el router de Express
+    getAll:     ()      => request('GET',    '/cash-registers/cajas'),
+    get:        (id)    => request('GET',    `/cash-registers/cajas/${id}`),
+    create:     (body)  => request('POST',   '/cash-registers/cajas', body),
+    update:     (id, b) => request('PUT',    `/cash-registers/cajas/${id}`, b),
+    delete:     (id)    => request('DELETE', `/cash-registers/cajas/${id}`),
+    
+    // 💡 Estos ya apuntan correctamente a /corte y /cortes según tu backend
+    createCorte: (body) => request('POST',   '/cash-registers/corte', body),
+    getCortes:   ()      => request('GET',    '/cash-registers/cortes'),
+    getPreview:  (cajaId)=> request('GET',    `/cash-registers/preview?caja_id=${cajaId}`),
 };
 
-// ── Series de folios ──────────────────────────────────────────────────────────
-export const invoiceSeriesService = {
-    // Lista todas las series del tenant
-    getAll: () => request('/invoice-series'),
-
-    // Crear nueva serie  — body: { name, prefix, next_folio? }
-    create: (data) => post('/invoice-series', data),
-
-    // Marcar como serie por defecto (el backend siempre usa la default al vender)
-    setDefault: (id) => post(`/invoice-series/${id}/default`, {}),
+/* ── Series de facturación ───────────────────────────────────────────── */
+export const seriesService = {
+    // 💡 Cambiado de '/series' a '/invoice-series'
+    getAll:     ()      => request('GET',    '/invoice-series'),
+    get:        (id)    => request('GET',    `/invoice-series/${id}`),
+    create:     (body)  => request('POST',   '/invoice-series', body),
+    update:     (id, b) => request('PUT',    `/invoice-series/${id}`, b),
+    delete:     (id)    => request('DELETE', `/invoice-series/${id}`),
+    // Recuerda agregar el setDefault si tu TopAppBar lo usa:
+    setDefault: (id)    => request('PATCH',  `/invoice-series/${id}/set-default`), 
 };
 
-export default request;
+// Mantener el alias por si tus componentes lo buscan con el nombre largo
+export const invoiceSeriesService = seriesService;
+
+/* ── Categorías ──────────────────────────────────────────────────────── */
+export const categoryService = {
+    getAll: (params) => request('GET',    `/categories?${toQS(params)}`),
+    get:    (id)     => request('GET',    `/categories/${id}`),
+    create: (body)   => request('POST',   '/categories', body),
+    update: (id, b)  => request('PUT',    `/categories/${id}`, b),
+    delete: (id)     => request('DELETE', `/categories/${id}`),
+};

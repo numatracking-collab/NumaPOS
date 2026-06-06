@@ -6,6 +6,70 @@ const router = express.Router();
 
 router.use(verifyToken);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/inventory/adjustments
+// Lista TODOS los ajustes del tenant (para historial global)
+// Query params: from (ISO), to (ISO), page, limit
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/adjustments', async (req, res) => {
+    const { tenantId } = req.user;
+    const page   = Math.max(Number(req.query.page)  || 1,  1);
+    const limit  = Math.max(Number(req.query.limit) || 20, 1);
+    const offset = (page - 1) * limit;
+    const from   = req.query.from || null;
+    const to     = req.query.to   || null;
+
+    try {
+        const params = [tenantId];
+        let whereExtra = '';
+
+        if (from) {
+            params.push(from);
+            whereExtra += ` AND ia.created_at >= $${params.length}`;
+        }
+        if (to) {
+            params.push(to);
+            whereExtra += ` AND ia.created_at <= $${params.length}`;
+        }
+
+        const dataParams  = [...params, limit, offset];
+        const countParams = [...params];
+
+        const result = await query(
+            `SELECT ia.*,
+                    u.name  AS user_name,
+                    p.name  AS product_name,
+                    p.sku   AS product_sku
+             FROM inventory_adjustments ia
+             LEFT JOIN users    u ON ia.user_id    = u.id
+             LEFT JOIN products p ON ia.product_id = p.id
+             WHERE ia.tenant_id = $1${whereExtra}
+             ORDER BY ia.created_at DESC
+             LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+            dataParams
+        );
+
+        const count = await query(
+            `SELECT COUNT(*)::int AS total
+             FROM inventory_adjustments ia
+             WHERE ia.tenant_id = $1${whereExtra}`,
+            countParams
+        );
+
+        res.json({
+            data: result.rows,
+            pagination: {
+                page, limit,
+                total: count.rows[0].total,
+                pages: Math.ceil(count.rows[0].total / limit)
+            }
+        });
+    } catch (err) {
+        console.error('Error fetching all adjustments:', err);
+        res.status(500).json({ error: 'Error al obtener los ajustes.' });
+    }
+});
+
 // GET: Historial de ajustes de un producto
 router.get('/adjustments/:productId', async (req, res) => {
     const { tenantId } = req.user;

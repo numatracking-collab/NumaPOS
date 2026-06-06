@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { cajasService, invoiceSeriesService } from '../services/api';
-
+// Cambia esto en TopAppBar.jsx:
+import { cajasService, seriesService as invoiceSeriesService } from '../services/api';
 export default function TopAppBar({
     searchValue,
     onSearchChange,

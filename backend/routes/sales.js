@@ -185,16 +185,73 @@ router.get('/', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/sales/:id
+// GET /api/sales — Listar ventas (Unificado con soporte para filtros por fecha)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/', async (req, res) => {
+    try {
+        const { tenantId: tenant_id } = req.user;
+        const page   = Math.max(Number(req.query.page)  || 1,  1);
+        const limit  = Math.max(Number(req.query.limit) || 20, 1);
+        const offset = (page - 1) * limit;
+        const from   = req.query.from || null;
+        const to     = req.query.to   || null;
+
+        const params  = [tenant_id];
+        let whereExtra = '';
+
+        if (from) {
+            params.push(from);
+            whereExtra += ` AND s.created_at >= $${params.length}`;
+        }
+        if (to) {
+            params.push(to);
+            whereExtra += ` AND s.created_at <= $${params.length}`;
+        }
+
+        const dataParams  = [...params, limit, offset];
+        const countParams = [...params];
+
+        const result = await pool.query(
+            `SELECT s.*,
+                    CONCAT(COALESCE(i.prefix,''), LPAD(s.folio_number::text, 4, '0')) AS folio,
+                    c.name AS caja_name
+             FROM sales s
+             LEFT JOIN invoice_series i ON i.id = s.series_id
+             LEFT JOIN cajas c          ON c.id = s.caja_id
+             WHERE s.tenant_id = $1${whereExtra}
+             ORDER BY s.created_at DESC, s.id DESC
+             LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+            dataParams
+        );
+
+        const count = await pool.query(
+            `SELECT COUNT(*)::int AS total FROM sales s WHERE s.tenant_id = $1${whereExtra}`,
+            countParams
+        );
+
+        return res.json({
+            data: result.rows,
+            pagination: {
+                page, limit,
+                total: count.rows[0].total,
+                pages: Math.ceil(count.rows[0].total / limit)
+            }
+        });
+    } catch (error) {
+        console.error('Error listando ventas:', error);
+        return res.status(500).json({ error: 'Error al obtener las ventas.' });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ✅ NUEVO: GET /api/sales/:id — Obtener detalle de una venta específica
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
     try {
         const { tenantId: tenant_id } = req.user;
-        const saleId = Number(req.params.id);
+        const { id } = req.params;
 
-        if (!Number.isInteger(saleId) || saleId <= 0)
-            return res.status(400).json({ error: 'ID de venta inválido.' });
-
+        // 1. Obtener la cabecera de la venta
         const saleResult = await pool.query(
             `SELECT s.*,
                     CONCAT(COALESCE(i.prefix,''), LPAD(s.folio_number::text, 4, '0')) AS folio,
@@ -203,23 +260,31 @@ router.get('/:id', async (req, res) => {
              LEFT JOIN invoice_series i ON i.id = s.series_id
              LEFT JOIN cajas c          ON c.id = s.caja_id
              WHERE s.id = $1 AND s.tenant_id = $2`,
-            [saleId, tenant_id]
+            [id, tenant_id]
         );
 
-        if (saleResult.rowCount === 0)
-            return res.status(404).json({ error: 'La venta no existe.' });
+        if (saleResult.rowCount === 0) {
+            return res.status(404).json({ error: 'La venta solicitada no existe.' });
+        }
 
+        // 2. Obtener los artículos/productos que pertenecen a esa venta
         const itemsResult = await pool.query(
-            `SELECT si.*, p.name, p.sku, p.image_url
+            `SELECT si.*, p.name AS product_name, p.sku
              FROM sale_items si
-             LEFT JOIN products p ON p.id = si.product_id
-             WHERE si.sale_id = $1 ORDER BY si.id ASC`,
-            [saleId]
+             JOIN products p ON p.id = si.product_id
+             WHERE si.sale_id = $1
+             ORDER BY si.id ASC`,
+            [id]
         );
 
-        return res.json({ sale: saleResult.rows[0], items: itemsResult.rows });
+        // 3. Devolver todo estructurado al frontend
+        return res.json({
+            ...saleResult.rows[0],
+            items: itemsResult.rows
+        });
+
     } catch (error) {
-        console.error('Error obteniendo venta:', error);
+        console.error('Error obteniendo detalle de venta:', error);
         return res.status(500).json({ error: 'Error al obtener el detalle de la venta.' });
     }
 });

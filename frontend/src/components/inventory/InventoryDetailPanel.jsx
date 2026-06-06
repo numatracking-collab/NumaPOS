@@ -33,7 +33,7 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
     const loadAdjustments = async (productId) => {
         setLoading(true);
         try {
-            const data = await inventoryService.getAdjustments(productId);
+            const data = await inventoryService.getProductHistory(productId);
             setAdjustments(data);
         } catch (err) {
             console.error(err);
@@ -57,7 +57,7 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
             return;
         }
         try {
-            const data = await inventoryService.adjust({
+            const data = await inventoryService.createAdjustment({
                 product_id: product.id,
                 type: adjustForm.type,
                 quantity: Number(adjustForm.quantity),
