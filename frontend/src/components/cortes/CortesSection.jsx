@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { cajasService } from '../../services/api';
-import FilterBar from '../history/FilterBar';
+import FilterBar from '../history/filterbar';
 import CorteDetail from './CorteDetail';
 import { LoadingState, EmptyState } from '../history/shared';
 import { fmtDate, fmtTime, fmtMoney, buildDateRange } from '../history/utils';
