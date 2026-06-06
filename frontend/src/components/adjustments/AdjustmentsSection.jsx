@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { inventoryService } from './../../services/api';
-import FilterBar from '../history/FilterBar';
+import FilterBar from '../history/filterbar';
 import AdjustmentDetail from './AdjustmentDetail';
 import { LoadingState, EmptyState } from '../history/shared';
 import { fmtDate, fmtTime, buildDateRange } from '../history/utils';

@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { salesService } from '../services/api';
-import FilterBar from './history/FilterBar';
+import FilterBar from './history/filterbar';
 import SaleDetail from './SaleDetail';
 import { LoadingState, EmptyState } from './history/shared';
 import { fmtDate, fmtTime, fmtMoney, METHOD_LABEL, METHOD_COLOR, buildDateRange } from './history/utils';
