@@ -47,11 +47,12 @@ export const authService = {
 
 /* ── Ventas ──────────────────────────────────────────────────────────── */
 export const salesService = {
-    list:   (params) => request('GET',  `/sales?${toQS(params)}`),
-    get:    (id)     => request('GET',  `/sales/${id}`),
-    create: (body)   => request('POST', '/sales', body),
+    list:   (params)        => request('GET',  `/sales?${toQS(params)}`),
+    get:    (id)            => request('GET',  `/sales/${id}`),
+    create: (body)          => request('POST', '/sales', body),
+    cancel: (id, reason='') => request('POST', `/sales/${id}/cancel`, { reason }),
 };
-
+ 
 /* ── Inventario / Productos ──────────────────────────────────────────── */
 /* ── Inventario / Productos ──────────────────────────────────────────── */
 export const inventoryService = {
