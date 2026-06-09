@@ -7,19 +7,21 @@ import POSPage from './pages/POSPage';
 import InventoryPage from './pages/InventoryPage';
 import SettingsPage from './pages/SettingsPage';
 import HistoryPage from './pages/HistoryPage';   // ← NUEVO
+import MarketingPage from './pages/MarketingPage';
 
 function App() {
     return (
         <AuthProvider>
             <BrowserRouter>
                 <Routes>
-                    <Route path="/login"  element={<LoginPage />} />
+                    <Route path="/login" element={<LoginPage />} />
                     <Route path="/signup" element={<SignUpPage />} />
                     <Route element={<ProtectedRoute />}>
-                        <Route path="/"          element={<POSPage />} />
+                        <Route path="/" element={<POSPage />} />
                         <Route path="/inventory" element={<InventoryPage />} />
-                        <Route path="/settings"  element={<SettingsPage />} />
-                        <Route path="/history"   element={<HistoryPage />} />  {/* ← NUEVO */}
+                        <Route path="/settings" element={<SettingsPage />} />
+                        <Route path="/marketing" element={<MarketingPage />} />
+                        <Route path="/history" element={<HistoryPage />} />  {/* ← NUEVO */}
                     </Route>
                 </Routes>
             </BrowserRouter>

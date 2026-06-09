@@ -60,6 +60,11 @@ export default function BottomNav() {
                     <span className="font-label-bold text-[10px] md:text-[11px]">Reportes</span>
                 </Link>
                 
+                <Link to="/marketing" className={`flex flex-col items-center gap-1 md:gap-xs px-2 md:px-lg py-1.5 md:py-xs rounded-lg transition-colors ${location.pathname === '/marketing' ? 'text-secondary bg-secondary/10 md:bg-transparent md:hover:bg-secondary/10' : 'text-on-surface-variant hover:bg-surface-container-high'}`}>
+                    <span className="material-symbols-outlined md:text-[24px] text-[22px]" style={{ fontVariationSettings: location.pathname === '/marketing' ? "'FILL' 1" : "'FILL' 0" }}>percent_discount</span>
+                    <span className="font-label-bold text-[10px] md:text-[11px]">Promoción</span>
+                </Link>
+
                 <Link to="/settings" className={`flex flex-col items-center gap-1 md:gap-xs px-2 md:px-lg py-1.5 md:py-xs rounded-lg transition-colors ${location.pathname === '/settings' ? 'text-secondary bg-secondary/10 md:bg-transparent md:hover:bg-secondary/10' : 'text-on-surface-variant hover:bg-surface-container-high'}`}>
                     <span className="material-symbols-outlined md:text-[24px] text-[22px]" style={{ fontVariationSettings: location.pathname === '/settings' ? "'FILL' 1" : "'FILL' 0" }}>settings</span>
                     <span className="font-label-bold text-[10px] md:text-[11px]">Ajustes</span>
