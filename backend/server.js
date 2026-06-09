@@ -12,6 +12,7 @@ import uploadRouter        from './routes/upload.js';
 import salesRoutes         from './routes/sales.js';
 import cashRegistersRouter from './routes/cashRegisters.js';
 import invoiceSeriesRouter from './routes/invoice-series.js';
+import offersRouter        from './routes/offers.js';          // ← nuevo
 
 dotenv.config();
 
@@ -30,7 +31,8 @@ app.use('/api/categories',     verifyToken, categoryRoutes);
 app.use('/api/inventory',      verifyToken, inventoryRoutes);
 app.use('/api/sales',          verifyToken, salesRoutes);
 app.use('/api/cash-registers', verifyToken, cashRegistersRouter);
-app.use('/api/invoice-series', verifyToken, invoiceSeriesRouter);  // ← movido aquí
+app.use('/api/invoice-series', verifyToken, invoiceSeriesRouter);
+app.use('/api/offers',         verifyToken, offersRouter);     // ← nuevo
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {

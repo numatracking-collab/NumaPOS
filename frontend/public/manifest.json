@@ -1,0 +1,20 @@
+{
+  "name": "NUMA POS v1.0.0",
+  "short_name": "NUMA POS",
+  "start_url": "/",
+  "display": "standalone", 
+  "background_color": "#ffffff",
+  "theme_color": "#6750A4",
+  "icons": [
+    {
+      "src": "/NUMA_POS_circular.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -106,3 +106,30 @@ export const categoryService = {
     update: (id, b)  => request('PUT',    `/categories/${id}`, b),
     delete: (id)     => request('DELETE', `/categories/${id}`),
 };
+
+/* ── Ofertas de marketing ────────────────────────────────────────────── */
+// Añadir este bloque en src/services/api.js junto al resto de servicios
+ 
+export const offersService = {
+    // Listar todas las ofertas (opcionalmente filtrar por status o product_id)
+    getAll:       (params)        => request('GET',   `/offers?${toQS(params)}`),
+ 
+    // Detalle de una oferta con sus productos embebidos
+    get:          (id)            => request('GET',   `/offers/${id}`),
+ 
+    // Crear nueva oferta
+    // body: { name, type, discount_pct?, buy_qty?, get_qty?,
+    //         date_start?, date_end?, time_start?, time_end?,
+    //         active_days, status?, product_ids[] }
+    create:       (body)          => request('POST',  '/offers', body),
+ 
+    // Editar oferta completa (reemplaza productos)
+    update:       (id, body)      => request('PUT',   `/offers/${id}`, body),
+ 
+    // Cambiar solo el estado: 'active' | 'paused' | 'expired'
+    setStatus:    (id, status)    => request('PATCH', `/offers/${id}/status`, { status }),
+ 
+    // Eliminar oferta permanentemente
+    delete:       (id)            => request('DELETE',`/offers/${id}`),
+};
+ 
