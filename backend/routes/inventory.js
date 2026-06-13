@@ -39,7 +39,8 @@ router.get('/adjustments', async (req, res) => {
             `SELECT ia.*,
                     u.name  AS user_name,
                     p.name  AS product_name,
-                    p.sku   AS product_sku
+                    p.sku   AS product_sku,
+                    p.unit  AS product_unit
              FROM inventory_adjustments ia
              LEFT JOIN users    u ON ia.user_id    = u.id
              LEFT JOIN products p ON ia.product_id = p.id
@@ -70,14 +71,17 @@ router.get('/adjustments', async (req, res) => {
     }
 });
 
-// GET: Historial de ajustes de un producto
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/inventory/adjustments/:productId
+// Historial de ajustes de un producto específico
+// ─────────────────────────────────────────────────────────────────────────────
 router.get('/adjustments/:productId', async (req, res) => {
     const { tenantId } = req.user;
     const { productId } = req.params;
 
     try {
         const result = await query(
-            `SELECT ia.*, u.name as user_name 
+            `SELECT ia.*, u.name AS user_name
              FROM inventory_adjustments ia
              LEFT JOIN users u ON ia.user_id = u.id
              WHERE ia.tenant_id = $1 AND ia.product_id = $2
@@ -91,17 +95,24 @@ router.get('/adjustments/:productId', async (req, res) => {
     }
 });
 
-// POST: Realizar un ajuste de inventario
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/adjust
+// Realiza un ajuste de inventario (soporta cantidades decimales)
+// ─────────────────────────────────────────────────────────────────────────────
 router.post('/adjust', async (req, res) => {
     const { tenantId, userId } = req.user;
-    const { product_id, type, quantity, reason } = req.body;
+    const { product_id, type, quantity: rawQuantity, reason } = req.body;
 
-    if (!product_id || !type || !quantity || !reason) {
+    // Convertir a número flotante desde lo que llegue (string o number)
+    const quantity = parseFloat(rawQuantity);
+
+    // ── Validaciones ──────────────────────────────────────────────────────
+    if (!product_id || !type || rawQuantity === undefined || rawQuantity === '' || !reason) {
         return res.status(400).json({ error: 'Todos los campos son requeridos para el ajuste.' });
     }
 
-    if (quantity <= 0) {
-        return res.status(400).json({ error: 'La cantidad debe ser mayor a 0.' });
+    if (isNaN(quantity) || quantity <= 0) {
+        return res.status(400).json({ error: 'La cantidad debe ser un número mayor a 0.' });
     }
 
     if (!['IN', 'OUT'].includes(type)) {
@@ -109,12 +120,11 @@ router.post('/adjust', async (req, res) => {
     }
 
     try {
-        // Transacción
         await query('BEGIN');
 
-        // Obtener stock actual
+        // Obtener stock actual y datos del producto (incluyendo allow_fractions)
         const productRes = await query(
-            'SELECT stock FROM products WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
+            'SELECT stock, allow_fractions FROM products WHERE id = $1 AND tenant_id = $2 FOR UPDATE',
             [product_id, tenantId]
         );
 
@@ -123,20 +133,27 @@ router.post('/adjust', async (req, res) => {
             return res.status(404).json({ error: 'Producto no encontrado.' });
         }
 
-        const currentStock = productRes.rows[0].stock;
-        let newStock = currentStock;
+        const { stock: currentStock, allow_fractions } = productRes.rows[0];
 
+        // Si el producto no permite fracciones, rechazar cantidades decimales
+        if (!allow_fractions && !Number.isInteger(quantity)) {
+            await query('ROLLBACK');
+            return res.status(400).json({ error: 'Este producto no permite cantidades fraccionadas.' });
+        }
+
+        // Calcular nuevo stock con precisión numérica (evitar errores de punto flotante)
+        let newStock;
         if (type === 'IN') {
-            newStock += quantity;
-        } else if (type === 'OUT') {
-            if (currentStock < quantity) {
+            newStock = parseFloat((parseFloat(currentStock) + quantity).toFixed(3));
+        } else {
+            if (parseFloat(currentStock) < quantity) {
                 await query('ROLLBACK');
                 return res.status(400).json({ error: 'Stock insuficiente para la salida.' });
             }
-            newStock -= quantity;
+            newStock = parseFloat((parseFloat(currentStock) - quantity).toFixed(3));
         }
 
-        // Actualizar producto
+        // Actualizar stock del producto
         await query(
             'UPDATE products SET stock = $1 WHERE id = $2 AND tenant_id = $3',
             [newStock, product_id, tenantId]
@@ -144,7 +161,7 @@ router.post('/adjust', async (req, res) => {
 
         // Registrar ajuste
         const adjRes = await query(
-            `INSERT INTO inventory_adjustments (tenant_id, product_id, user_id, type, quantity, reason) 
+            `INSERT INTO inventory_adjustments (tenant_id, product_id, user_id, type, quantity, reason)
              VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
             [tenantId, product_id, userId, type, quantity, reason]
         );

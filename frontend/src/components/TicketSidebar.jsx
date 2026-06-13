@@ -1,13 +1,165 @@
 import { useState, useEffect, useRef } from 'react';
 import CheckoutModal from './CheckoutModal';
 
+/* ─────────────────────────────────────────────────────────────────
+   CartItem — fila de carrito con input de cantidad editable
+───────────────────────────────────────────────────────────────── */
+function CartItem({ item, onUpdateQuantity }) {
+    const allowFractions = item.allow_fractions ?? false;
+    const unit           = item.unit || 'pza.';
+    const step           = allowFractions ? 0.1 : 1;
+
+    // Valor local del input (string para permitir edición libre)
+    const [inputVal, setInputVal] = useState(String(item.quantity));
+
+    // Sincronizar si la cantidad cambia externamente (ej. se agrega el mismo producto de nuevo)
+    useEffect(() => {
+        setInputVal(
+            allowFractions
+                ? String(item.quantity)
+                : String(Math.floor(item.quantity))
+        );
+    }, [item.quantity, allowFractions]);
+
+    /* ── Helpers ── */
+    const clampMin = (v) => Math.max(allowFractions ? 0.01 : 1, v);
+
+    const round = (v) =>
+        allowFractions
+            ? Math.round(v * 1000) / 1000   // 3 decimales para evitar errores de punto flotante
+            : Math.floor(v);
+
+    /* ── Commit: valida y aplica el valor del input ── */
+    const commitInput = () => {
+        const parsed = parseFloat(inputVal);
+        if (isNaN(parsed) || parsed <= 0) {
+            // Valor inválido → restaurar
+            setInputVal(String(item.quantity));
+            return;
+        }
+        const next = clampMin(round(parsed));
+        const delta = next - item.quantity;
+        if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
+        setInputVal(String(next));
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') e.target.blur();
+        // Bloquear letras no numéricas (permitir: dígitos, punto, retroceso, etc.)
+        const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','Tab','.', '-'];
+        if (!allowed.includes(e.key) && !/^\d$/.test(e.key)) e.preventDefault();
+        // Si no permite fracciones, bloquear el punto
+        if (!allowFractions && e.key === '.') e.preventDefault();
+    };
+
+    /* ── Botones +/- ── */
+    const handleMinus = () => {
+        const next = clampMin(round(item.quantity - step));
+        const delta = next - item.quantity;
+        if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
+    };
+
+    const handlePlus = () => {
+        const next = round(item.quantity + step);
+        onUpdateQuantity(item.id, next - item.quantity);
+    };
+
+    const subtotal = item.price * item.quantity;
+
+    return (
+        <div className="flex gap-3 group animate-fade-in">
+            {/* Imagen */}
+            <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
+                {item.images?.[0]?.url || item.image_url ? (
+                    <img
+                        className="w-full h-full object-cover"
+                        src={item.images?.[0]?.url || item.image_url}
+                        alt={item.name}
+                    />
+                ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-300">
+                        <span className="material-symbols-outlined">image</span>
+                    </div>
+                )}
+            </div>
+
+            {/* Contenido */}
+            <div className="flex-1 flex flex-col justify-between min-w-0">
+                {/* Nombre + importe */}
+                <div className="flex justify-between gap-2 items-start">
+                    <span className="font-bold text-[13px] text-on-surface truncate leading-tight">
+                        {item.name}
+                    </span>
+                    <span className="font-bold text-[14px] shrink-0">
+                        ${subtotal.toFixed(2)}
+                    </span>
+                </div>
+
+                {/* Precio unitario */}
+                <span className="text-[10px] text-on-surface-variant">
+                    ${Number(item.price).toFixed(2)} / {unit}
+                </span>
+
+                {/* Controles de cantidad */}
+                <div className="flex items-center justify-between mt-1">
+                    <div className="flex items-center bg-surface-container-low rounded-lg border border-outline-variant overflow-hidden">
+                        {/* Botón − */}
+                        <button
+                            onClick={handleMinus}
+                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0"
+                        >
+                            <span className="material-symbols-outlined text-sm">remove</span>
+                        </button>
+
+                        {/* Input editable */}
+                        <input
+                            type="text"
+                            inputMode={allowFractions ? 'decimal' : 'numeric'}
+                            value={inputVal}
+                            onChange={(e) => setInputVal(e.target.value)}
+                            onBlur={commitInput}
+                            onKeyDown={handleKeyDown}
+                            onFocus={(e) => e.target.select()}
+                            className="w-14 h-8 text-center font-bold text-[13px] bg-transparent focus:outline-none focus:bg-secondary/5 transition-colors"
+                        />
+
+                        {/* Botón + */}
+                        <button
+                            onClick={handlePlus}
+                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0"
+                        >
+                            <span className="material-symbols-outlined text-sm">add</span>
+                        </button>
+                    </div>
+
+                    {/* Badge fraccionable + SKU */}
+                    <div className="flex flex-col items-end gap-0.5">
+                        {allowFractions && (
+                            <span className="text-[9px] font-bold text-secondary/70 flex items-center gap-0.5">
+                                <span className="material-symbols-outlined text-[10px]">scatter_plot</span>
+                                fracción
+                            </span>
+                        )}
+                        <span className="text-on-surface-variant font-mono text-[10px]">
+                            {item.sku || '—'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   TicketSidebar
+───────────────────────────────────────────────────────────────── */
 export default function TicketSidebar({
     cart,
-    products,          // lista completa de productos del POS
+    products,
     onUpdateQuantity,
     onClearCart,
     onSaleSuccess,
-    onAddProduct,      // (product) => void
+    onAddProduct,
     cajaId,
     serie,
 }) {
@@ -18,9 +170,9 @@ export default function TicketSidebar({
     const [query,       setQuery]       = useState('');
     const [results,     setResults]     = useState([]);
     const [showResults, setShowResults] = useState(false);
-    const searchRef  = useRef(null);
-    const inputRef   = useRef(null);
-    const lastScan   = useRef('');   // evita doble-escaneo del mismo código
+    const searchRef = useRef(null);
+    const inputRef  = useRef(null);
+    const lastScan  = useRef('');
 
     useEffect(() => {
         if (serie) setNextFolio(serie.next_folio);
@@ -58,26 +210,20 @@ export default function TicketSidebar({
         const q = query.trim().toLowerCase();
         if (!q) return;
 
-        // Escaneo exacto por SKU o clave adicional
         const exact = (products || []).find(p =>
             p.sku?.toLowerCase() === q ||
             (p.additional_keys || []).some(k => k?.toLowerCase() === q)
         );
 
         if (exact) {
-            // Evitar doble-escaneo del mismo código en < 300ms
             if (lastScan.current === exact.id + q) return;
             lastScan.current = exact.id + q;
             setTimeout(() => { lastScan.current = ''; }, 300);
-
             addProduct(exact);
             return;
         }
 
-        // Si solo hay un resultado, agregarlo directamente
-        if (results.length === 1) {
-            addProduct(results[0]);
-        }
+        if (results.length === 1) addProduct(results[0]);
     };
 
     const addProduct = (product) => {
@@ -150,7 +296,8 @@ export default function TicketSidebar({
                     {showResults && results.length > 0 && (
                         <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-outline-variant/50 rounded-xl shadow-xl z-50 overflow-hidden max-h-64 overflow-y-auto">
                             {results.map(p => {
-                                const img = p.images?.[0]?.url || p.image_url;
+                                const img  = p.images?.[0]?.url || p.image_url;
+                                const unit = p.unit || 'pza.';
                                 return (
                                     <button
                                         key={p.id}
@@ -169,10 +316,16 @@ export default function TicketSidebar({
                                             <p className="text-[13px] font-medium text-on-surface truncate">{p.name}</p>
                                             <p className="text-[11px] text-outline font-mono">{p.sku || '—'}</p>
                                         </div>
-                                        {/* Precio + stock */}
+                                        {/* Precio + stock + badge fracción */}
                                         <div className="text-right shrink-0">
                                             <p className="text-[13px] font-bold text-secondary">${Number(p.price).toFixed(2)}</p>
-                                            <p className="text-[10px] text-outline">{p.stock} pzs</p>
+                                            <p className="text-[10px] text-outline">{p.stock} {unit}</p>
+                                            {p.allow_fractions && (
+                                                <span className="text-[9px] font-bold text-secondary/60 flex items-center justify-end gap-0.5">
+                                                    <span className="material-symbols-outlined text-[10px]">scatter_plot</span>
+                                                    fracción
+                                                </span>
+                                            )}
                                         </div>
                                     </button>
                                 );
@@ -199,54 +352,11 @@ export default function TicketSidebar({
                     </div>
                 ) : (
                     cart.map((item) => (
-                        <div key={item.id} className="flex gap-md group animate-fade-in">
-                            <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
-                                {item.images?.[0]?.url || item.image_url ? (
-                                    <img
-                                        className="w-full h-full object-cover"
-                                        src={item.images?.[0]?.url || item.image_url}
-                                        alt={item.name}
-                                    />
-                                ) : (
-                                    <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-300">
-                                        <span className="material-symbols-outlined">image</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="flex-1 flex flex-col justify-between">
-                                <div className="flex justify-between gap-3">
-                                    <span className="font-label-bold text-label-bold text-on-surface block truncate max-w-[150px]">
-                                        {item.name}
-                                    </span>
-                                    <span className="font-body-md text-body-md font-bold">
-                                        ${(item.price * item.quantity).toFixed(2)}
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center bg-surface-container-low rounded-lg border border-outline-variant">
-                                        <button
-                                            onClick={() => onUpdateQuantity(item.id, -1)}
-                                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high rounded-l-lg transition-colors"
-                                        >
-                                            <span className="material-symbols-outlined text-sm">remove</span>
-                                        </button>
-                                        <span className="w-10 text-center font-label-bold text-label-bold">
-                                            {item.quantity}
-                                        </span>
-                                        <button
-                                            onClick={() => onUpdateQuantity(item.id, 1)}
-                                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high rounded-r-lg transition-colors"
-                                        >
-                                            <span className="material-symbols-outlined text-sm">add</span>
-                                        </button>
-                                    </div>
-                                    <span className="text-on-surface-variant font-label-mono text-[10px]">
-                                        SKU: {item.sku}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
+                        <CartItem
+                            key={item.id}
+                            item={item}
+                            onUpdateQuantity={onUpdateQuantity}
+                        />
                     ))
                 )}
             </div>

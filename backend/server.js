@@ -13,6 +13,9 @@ import salesRoutes         from './routes/sales.js';
 import cashRegistersRouter from './routes/cashRegisters.js';
 import invoiceSeriesRouter from './routes/invoice-series.js';
 import offersRouter        from './routes/offers.js';          // ← nuevo
+import aiRouter from './routes/ai.js';
+import adGenerateRouter from './routes/ad-generate.js';
+
 
 dotenv.config();
 
@@ -20,12 +23,13 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-
 // ── Rutas públicas ────────────────────────────────────────────────────────────
 app.use('/api/auth',   authRoutes);
 app.use('/api/upload', uploadRouter);
+app.use('/api/ai', adGenerateRouter);
 
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
+app.use('/api/ai', aiRouter);
 app.use('/api/products',       verifyToken, productRoutes);
 app.use('/api/categories',     verifyToken, categoryRoutes);
 app.use('/api/inventory',      verifyToken, inventoryRoutes);
