@@ -85,7 +85,7 @@ async function generateImage(hfToken, prompt, format) {
     const { width, height } = sizes[format] ?? sizes.square;
 
     const MAX_RETRIES = 2;
-    const RETRY_DELAYS = [8000, 20000];
+    const RETRY_DELAYS = [3000, 80000];
     let lastError;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
