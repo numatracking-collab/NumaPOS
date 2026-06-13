@@ -1,5 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 
+const UNITS = [
+    { value: 'Pza',      label: 'Pieza (Pza)' },
+    { value: 'kg',       label: 'Kilogramo (kg)' },
+    { value: 'l',        label: 'Litro (l)' },
+    { value: 'm',        label: 'Metro (m)' },
+    { value: 'servicio', label: 'Servicio' },
+];
+
 export default function ProductFormModal({ isOpen, onClose, onSave, product, categories }) {
     const [formData, setFormData] = useState({
         primaryKey:     '',
@@ -11,6 +19,8 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product, cat
         stock:          '',
         minStock:       '',
         maxStock:       '',
+        unit:           'Pza',
+        allowFractions: false,
         images:         [],   // [{ file, preview }] para nuevas  |  [{ url, preview }] para existentes
     });
     const [error,  setError]  = useState('');
@@ -20,15 +30,17 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product, cat
     useEffect(() => {
         if (product) {
             setFormData({
-                primaryKey:     product.sku            || '',
-                additionalKeys: product.additional_keys || [],
-                name:           product.name           || '',
-                category_id:    product.category_id    || '',
-                cost:           product.cost           ?? '',
-                price:          product.price          || '',
-                stock:          product.stock          || '',
-                minStock:       product.min_stock      ?? '',
-                maxStock:       product.max_stock      ?? '',
+                primaryKey:     product.sku             || '',
+                additionalKeys: product.additional_keys  || [],
+                name:           product.name             || '',
+                category_id:    product.category_id      || '',
+                cost:           product.cost             ?? '',
+                price:          product.price            || '',
+                stock:          product.stock            || '',
+                minStock:       product.min_stock        ?? '',
+                maxStock:       product.max_stock        ?? '',
+                unit:           product.unit             || 'Pza',
+                allowFractions: product.allow_fractions  ?? false,
                 images: (product.images || []).map(img => ({
                     url:     img.url,
                     preview: img.url,
@@ -40,6 +52,8 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product, cat
                 name: '', category_id: '',
                 cost: '', price: '',
                 stock: '0', minStock: '', maxStock: '',
+                unit: 'Pza',
+                allowFractions: false,
                 images: [],
             });
         }
@@ -50,6 +64,9 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product, cat
     if (!isOpen) return null;
 
     const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+
+    const handleToggleFractions = () =>
+        setFormData(prev => ({ ...prev, allowFractions: !prev.allowFractions }));
 
     const handleAddKey    = ()         => setFormData(prev => ({ ...prev, additionalKeys: [...prev.additionalKeys, ''] }));
     const handleKeyChange = (i, value) => setFormData(prev => { const k = [...prev.additionalKeys]; k[i] = value; return { ...prev, additionalKeys: k }; });
@@ -84,11 +101,10 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product, cat
             let allImageUrls = [...existingUrls];
 
             if (newFiles.length > 0) {
-                // Upload directo a Cloudinary (sin pasar por el backend)
                 const uploadOne = async (file) => {
                     const fd = new FormData();
                     fd.append('file', file);
-                    fd.append('upload_preset', 'numa_pos_images'); // ← nombre de tu preset
+                    fd.append('upload_preset', 'numa_pos_images');
                     fd.append('folder', 'pos/products');
 
                     const res = await fetch(
@@ -109,11 +125,13 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product, cat
                 additionalKeys: formData.additionalKeys.map(k => k.trim()).filter(Boolean),
                 name:           formData.name.trim(),
                 category_id:    formData.category_id ? Number(formData.category_id) : null,
-                cost:           formData.cost   !== '' ? Number(formData.cost)    : null,
+                cost:           formData.cost   !== '' ? Number(formData.cost)   : null,
                 price:          Number(formData.price),
                 stock:          product ? undefined : Number(formData.stock),
                 minStock:       formData.minStock !== '' ? Number(formData.minStock) : null,
                 maxStock:       formData.maxStock !== '' ? Number(formData.maxStock) : null,
+                unit:           formData.unit,
+                allowFractions: formData.allowFractions,
                 imageUrls:      allImageUrls,
             });
         } catch (err) {
@@ -209,6 +227,64 @@ export default function ProductFormModal({ isOpen, onClose, onSave, product, cat
                                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                                 ))}
                             </select>
+                        </section>
+
+                        {/* Unidad de venta */}
+                        <section className="flex flex-col gap-3">
+                            <SectionLabel icon="straighten" label="Unidad de venta" />
+                            <div className="flex flex-col sm:flex-row gap-4">
+
+                                {/* Selector de unidad */}
+                                <div className="flex flex-col gap-1.5 flex-1">
+                                    <label className="text-[12px] font-semibold text-on-surface flex items-center gap-1">
+                                        Unidad <span className="text-error text-[14px] leading-none">*</span>
+                                    </label>
+                                    <select
+                                        name="unit"
+                                        value={formData.unit}
+                                        onChange={handleChange}
+                                        className="w-full px-3 py-[9px] bg-surface-container-low border border-outline-variant rounded-lg text-[14px] focus:outline-none focus:ring-2 focus:ring-secondary transition-all"
+                                    >
+                                        {UNITS.map(u => (
+                                            <option key={u.value} value={u.value}>{u.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Switch de fracciones */}
+                                <div className="flex flex-col gap-1.5 flex-1">
+                                    <label className="text-[12px] font-medium text-on-surface-variant">
+                                        Venta fraccionada
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={handleToggleFractions}
+                                        className={`
+                                            flex items-center gap-3 px-4 py-[9px] rounded-lg border transition-all text-left h-[38px]
+                                            ${formData.allowFractions
+                                                ? 'bg-secondary/10 border-secondary'
+                                                : 'bg-surface-container-low border-outline-variant'}
+                                        `}
+                                    >
+                                        {/* Track */}
+                                        <span className={`
+                                            relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors duration-200
+                                            ${formData.allowFractions ? 'bg-secondary' : 'bg-outline-variant'}
+                                        `}>
+                                            <span className={`
+                                                inline-block h-5 w-5 rounded-full bg-white shadow transform transition-transform duration-200 mt-0.5
+                                                ${formData.allowFractions ? 'translate-x-5' : 'translate-x-0.5'}
+                                            `} />
+                                        </span>
+                                        <span className={`text-[13px] font-medium leading-tight ${formData.allowFractions ? 'text-secondary' : 'text-on-surface-variant'}`}>
+                                            {formData.allowFractions
+                                                ? <><strong>Sí</strong> — permite 1.5, 0.75…</>
+                                                : <><strong>No</strong> — solo cantidades enteras</>}
+                                        </span>
+                                    </button>
+                                </div>
+
+                            </div>
                         </section>
 
                         {/* Precios */}
