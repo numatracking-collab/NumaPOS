@@ -51,13 +51,15 @@ export default function LoginPage() {
             <div className="relative z-10 w-full max-w-[448px] mx-md">
                 {/* Card principal */}
                 <div className="bg-surface-container-lowest rounded-[16px] shadow-[0_8px_40px_rgba(0,0,0,0.08)] border border-outline-variant/30 overflow-hidden">
-                    
+
                     {/* Header con branding */}
                     <div className="bg-primary-container px-xl py-xl text-center">
-                        <div className="inline-flex items-center justify-center w-[64px] h-[64px] bg-secondary rounded-[16px] mb-md shadow-lg">
-                            <span className="material-symbols-outlined text-on-secondary text-[30px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                                point_of_sale
-                            </span>
+                        <div className="inline-flex items-center justify-center w-[100px] h-[100px] bg-secondary rounded-[16px] mb-md shadow-lg">
+                            <img
+                                src="/NUMA_POS_circular.svg"
+                                alt="NUMA POS"
+                                className="w-[100px] h-[100px] object-contain"
+                            />
                         </div>
                         <h1 className="text-[24px] font-bold text-on-primary tracking-tight">NUMA POS</h1>
                         <p className="text-on-primary-container text-[14px] mt-base">Sistema de Punto de Venta</p>

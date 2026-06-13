@@ -59,7 +59,9 @@ router.post('/', async (req, res) => {
         name, sku, category_id,
         price, stock, cost,
         minStock, maxStock,
-        imageUrls = [],
+        unit           = 'Pza',
+        allowFractions = false,
+        imageUrls      = [],
         additionalKeys = [],
     } = req.body;
 
@@ -71,20 +73,23 @@ router.post('/', async (req, res) => {
         // 1 — Producto principal
         const { rows } = await query(
             `INSERT INTO products
-                (tenant_id, category_id, name, sku, price, stock, cost, min_stock, max_stock, image_url)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                (tenant_id, category_id, name, sku, price, stock, cost,
+                 min_stock, max_stock, image_url, unit, allow_fractions)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
              RETURNING *`,
             [
                 tenantId,
-                category_id  || null,
+                category_id    || null,
                 name,
-                sku          || null,
+                sku            || null,
                 price,
-                stock        ?? 0,
-                cost         || null,
-                minStock     || null,
-                maxStock     || null,
-                imageUrls[0] || null,   // primera imagen → image_url (retrocompatibilidad)
+                stock          ?? 0,
+                cost           || null,
+                minStock       || null,
+                maxStock       || null,
+                imageUrls[0]   || null,   // primera imagen → image_url (retrocompatibilidad)
+                unit,
+                allowFractions,
             ]
         );
         const product = rows[0];
@@ -127,7 +132,9 @@ router.put('/:id', async (req, res) => {
         name, sku, category_id,
         price, cost,
         minStock, maxStock,
-        imageUrls = [],
+        unit           = 'Pza',
+        allowFractions = false,
+        imageUrls      = [],
         additionalKeys = [],
     } = req.body;
 
@@ -139,19 +146,29 @@ router.put('/:id', async (req, res) => {
         // 1 — Actualizar producto
         const { rows, rowCount } = await query(
             `UPDATE products
-             SET category_id = $1, name = $2, sku = $3, price = $4,
-                 cost = $5, min_stock = $6, max_stock = $7, image_url = $8
-             WHERE id = $9 AND tenant_id = $10
+             SET category_id    = $1,
+                 name           = $2,
+                 sku            = $3,
+                 price          = $4,
+                 cost           = $5,
+                 min_stock      = $6,
+                 max_stock      = $7,
+                 image_url      = $8,
+                 unit           = $9,
+                 allow_fractions = $10
+             WHERE id = $11 AND tenant_id = $12
              RETURNING *`,
             [
-                category_id  || null,
+                category_id    || null,
                 name,
-                sku          || null,
+                sku            || null,
                 price,
-                cost         || null,
-                minStock     || null,
-                maxStock     || null,
-                imageUrls[0] || null,
+                cost           || null,
+                minStock       || null,
+                maxStock       || null,
+                imageUrls[0]   || null,
+                unit,
+                allowFractions,
                 id,
                 tenantId,
             ]

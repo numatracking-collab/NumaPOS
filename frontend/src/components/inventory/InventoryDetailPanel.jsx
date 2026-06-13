@@ -52,15 +52,20 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
 
     const handleAdjustSubmit = async () => {
         setError('');
-        if (!adjustForm.quantity || isNaN(adjustForm.quantity) || Number(adjustForm.quantity) <= 0) {
+        const parsed = parseFloat(adjustForm.quantity);
+        if (!adjustForm.quantity || isNaN(parsed) || parsed <= 0) {
             setError('Por favor, ingresa una cantidad válida que sea mayor a cero (0).');
+            return;
+        }
+        if (!allowFractions && !Number.isInteger(parsed)) {
+            setError('Este producto no permite cantidades fraccionadas. Ingresa un número entero.');
             return;
         }
         try {
             const data = await inventoryService.createAdjustment({
                 product_id: product.id,
                 type: adjustForm.type,
-                quantity: Number(adjustForm.quantity),
+                quantity: parsed,
                 reason: adjustForm.reason,
             });
             setModalOpen(false);
@@ -72,11 +77,27 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
         }
     };
 
-    const stock = product?.stock ?? 0;
-    const min = product?.stock_min ?? null;
-    const max = product?.stock_max ?? null;
-    const isLowStock = min !== null ? stock < min : stock <= 5;
-    const isOverStock = max !== null && stock > max;
+    // ── Derivados del producto ──────────────────────────────────────────────
+    const stock          = product?.stock          ?? 0;
+    const min            = product?.min_stock      ?? null;
+    const max            = product?.max_stock      ?? null;
+    const unit           = product?.unit           || 'pza.';
+    const allowFractions = product?.allow_fractions ?? false;
+    const isLowStock     = min !== null ? stock < min  : stock <= 5;
+    const isOverStock    = max !== null && stock > max;
+
+    // Formato del stock: decimales limpios si es fraccionable, entero si no
+    const stockDisplay = allowFractions
+        ? Number(stock).toFixed(3).replace(/\.?0+$/, '')
+        : Math.floor(stock);
+
+    // Manejo del input de cantidad en el modal
+    const handleQtyKeyDown = (e) => {
+        if (e.key === 'Enter') e.target.blur();
+        const allowed = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab'];
+        if (!allowed.includes(e.key) && !/^\d$/.test(e.key) && e.key !== '.') e.preventDefault();
+        if (!allowFractions && e.key === '.') e.preventDefault();
+    };
 
     if (!product) {
         return (
@@ -96,16 +117,9 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
             md:relative md:inset-auto md:z-20 md:flex-[1.5] md:border-l md:border-outline-variant/30
         `}>
 
-            {/*
-              ── Image hero ──
-              CORRECCIÓN CLAVE: El div externo es 'relative' SIN overflow-hidden.
-              Esto permite que el dropdown del menú de 3 puntos sea visible completo.
-              El overflow-hidden se aplica SOLO al div interno que contiene la imagen,
-              para recortarla correctamente sin afectar al dropdown.
-            */}
+            {/* ── Image hero ── */}
             <div className="relative h-44 md:h-52 bg-surface-container-low flex-shrink-0">
 
-                {/* Imagen — tiene su propio contenedor con overflow-hidden */}
                 <div className="absolute inset-0 overflow-hidden flex items-center justify-center">
                     {product.images?.[0]?.url || product.image_url ? (
                         <img
@@ -121,7 +135,17 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                     )}
                 </div>
 
-                {/* Botón de Regresar — solo visible en móvil */}
+                {/* Badge fraccionable sobre la imagen */}
+                {allowFractions && (
+                    <div className="absolute bottom-3 left-3 z-10">
+                        <span className="flex items-center gap-1 bg-black/55 backdrop-blur-sm text-white text-[10px] font-bold px-2.5 py-1 rounded-full leading-none tracking-wide">
+                            <span className="material-symbols-outlined text-[11px]">scatter_plot</span>
+                            Venta fraccionada
+                        </span>
+                    </div>
+                )}
+
+                {/* Botón Regresar — solo móvil */}
                 {onBack && (
                     <div className="absolute top-3 left-3 z-20 md:hidden">
                         <button
@@ -135,10 +159,7 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                     </div>
                 )}
 
-                {/*
-                  3-dot menu — posicionado en el div externo (sin overflow-hidden),
-                  así el dropdown NO se recorta en móvil ni escritorio.
-                */}
+                {/* 3-dot menu */}
                 <div className="absolute top-3 right-3 z-10" ref={menuRef}>
                     <button
                         onClick={() => setMenuOpen((v) => !v)}
@@ -200,6 +221,11 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                             <span className="font-mono text-sm font-bold text-on-surface-variant bg-surface-container px-2.5 py-1.5 rounded-md">
                                 Código: {product.sku || 'Sin código'}
                             </span>
+                            {/* Chip de unidad */}
+                            <span className="inline-flex items-center gap-1 text-sm font-bold px-2.5 py-1.5 rounded-md bg-surface-container text-on-surface-variant">
+                                <span className="material-symbols-outlined text-[14px]">straighten</span>
+                                {unit}
+                            </span>
                         </div>
                     </div>
 
@@ -209,12 +235,14 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                             <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wide mb-1">Costo al proveedor</p>
                             <p className="text-lg font-bold text-on-surface">
                                 ${Number(product.cost ?? 0).toFixed(2)}
+                                <span className="text-xs font-semibold text-outline ml-1">/ {unit}</span>
                             </p>
                         </div>
                         <div className="sm:pl-2">
                             <p className="text-xs font-bold text-secondary uppercase tracking-wide mb-1">Precio al público</p>
                             <p className="text-xl font-black text-secondary">
                                 ${Number(product.price ?? 0).toFixed(2)}
+                                <span className="text-xs font-semibold text-secondary/60 ml-1">/ {unit}</span>
                             </p>
                         </div>
                     </div>
@@ -224,12 +252,12 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                 <div className="px-4 py-4 flex items-center justify-between border-b border-outline-variant/30 bg-surface flex-shrink-0">
                     <div className="flex items-center gap-2.5 text-base font-bold text-on-surface-variant">
                         <span className="material-symbols-outlined text-[26px]">package_2</span>
-                        <span className="hidden sm:inline">Piezas en tienda:</span>
-                        <span className="sm:hidden">En tienda:</span>
+                        <span className="hidden sm:inline">Existencia en tienda:</span>
+                        <span className="sm:hidden">Existencia:</span>
                     </div>
                     <div className="flex items-baseline gap-2">
-                        <span className="text-[38px] font-black text-on-surface leading-none">{stock}</span>
-                        <span className="text-sm font-bold text-outline">piezas</span>
+                        <span className="text-[38px] font-black text-on-surface leading-none">{stockDisplay}</span>
+                        <span className="text-sm font-bold text-outline">{unit}</span>
                     </div>
                 </div>
 
@@ -241,14 +269,18 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                                 <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
                                 Mínimo permitido
                             </span>
-                            <span className="text-xl font-black text-on-surface">{min ?? 'No asignado'}</span>
+                            <span className="text-xl font-black text-on-surface">
+                                {min !== null ? `${min} ${unit}` : 'No asignado'}
+                            </span>
                         </div>
                         <div className="px-4 py-3.5 flex flex-col gap-1">
                             <span className="text-xs font-bold text-outline-variant uppercase tracking-wider flex items-center gap-1">
                                 <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
                                 Máximo permitido
                             </span>
-                            <span className="text-xl font-black text-on-surface">{max ?? 'No asignado'}</span>
+                            <span className="text-xl font-black text-on-surface">
+                                {max !== null ? `${max} ${unit}` : 'No asignado'}
+                            </span>
                         </div>
                     </div>
                 )}
@@ -258,7 +290,7 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                     <div className="mx-4 my-3 px-4 py-3.5 rounded-xl bg-error-container flex items-start gap-3 flex-shrink-0 border border-error/20">
                         <span className="material-symbols-outlined text-[22px] text-error mt-0.5">warning</span>
                         <p className="text-sm font-bold text-on-error-container leading-snug">
-                            ¡Atención! Hay muy pocas piezas de este producto. Se recomienda surtir pronto.
+                            ¡Atención! Hay muy {allowFractions ? 'poco' : 'pocas'} {unit} de este producto. Se recomienda surtir pronto.
                         </p>
                     </div>
                 )}
@@ -266,18 +298,12 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                     <div className="mx-4 my-3 px-4 py-3.5 rounded-xl bg-primary-container flex items-start gap-3 flex-shrink-0 border border-primary/20">
                         <span className="material-symbols-outlined text-[22px] text-primary mt-0.5">info</span>
                         <p className="text-sm font-bold text-on-primary-container leading-snug">
-                            ¡Aviso! Tienes más piezas de las recomendadas ocupando espacio.
+                            ¡Aviso! Tienes más {unit} de los recomendados ocupando espacio.
                         </p>
                     </div>
                 )}
 
-                {/*
-                  ── Historial de cambios ──
-                  CORRECCIÓN CLAVE: Se quitó 'overflow-hidden' y 'flex-1' del wrapper.
-                  Antes, el overflow-hidden recortaba visualmente el contenido cuando
-                  se expandía. Ahora el wrapper es 'flex-shrink-0' y fluye naturalmente
-                  dentro del padre overflow-y-auto, que es quien maneja el scroll.
-                */}
+                {/* ── Historial de cambios ── */}
                 <div className="flex-shrink-0">
                     <button
                         onClick={() => setHistoryOpen((v) => !v)}
@@ -312,36 +338,43 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                                     Aún no hay cambios registrados en este producto.
                                 </div>
                             ) : (
-                                adjustments.map((adj) => (
-                                    <div
-                                        key={adj.id}
-                                        className="flex items-center gap-3 px-4 py-3.5 border-b border-outline-variant/20 last:border-none"
-                                    >
-                                        <span className={`text-sm font-black px-2.5 py-1.5 rounded-lg shrink-0 w-14 text-center ${
-                                            adj.type === 'IN'
-                                                ? 'bg-tertiary-container text-tertiary-dark'
-                                                : 'bg-error-container text-error-dark'
-                                        }`}>
-                                            {adj.type === 'IN' ? '+' : '−'}{adj.quantity}
-                                        </span>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-bold text-on-surface capitalize truncate">{adj.reason}</p>
-                                            <p className="text-xs font-medium text-outline-variant mt-0.5">
-                                                {new Date(adj.created_at).toLocaleString()}
-                                            </p>
+                                adjustments.map((adj) => {
+                                    // Mostrar cantidad con decimales limpios si el producto es fraccionable
+                                    const qtyDisplay = allowFractions
+                                        ? Number(adj.quantity).toFixed(3).replace(/\.?0+$/, '')
+                                        : adj.quantity;
+                                    return (
+                                        <div
+                                            key={adj.id}
+                                            className="flex items-center gap-3 px-4 py-3.5 border-b border-outline-variant/20 last:border-none"
+                                        >
+                                            <span className={`text-sm font-black px-2.5 py-1.5 rounded-lg shrink-0 min-w-[56px] text-center ${
+                                                adj.type === 'IN'
+                                                    ? 'bg-tertiary-container text-tertiary-dark'
+                                                    : 'bg-error-container text-error-dark'
+                                            }`}>
+                                                {adj.type === 'IN' ? '+' : '−'}{qtyDisplay}
+                                                <span className="text-[9px] font-semibold ml-0.5 opacity-70">{unit}</span>
+                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-bold text-on-surface capitalize truncate">{adj.reason}</p>
+                                                <p className="text-xs font-medium text-outline-variant mt-0.5">
+                                                    {new Date(adj.created_at).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <span className="text-xs font-bold text-outline-variant truncate max-w-[80px] shrink-0">
+                                                {adj.user_name}
+                                            </span>
                                         </div>
-                                        <span className="text-xs font-bold text-outline-variant truncate max-w-[80px] shrink-0">
-                                            {adj.user_name}
-                                        </span>
-                                    </div>
-                                ))
+                                    );
+                                })
                             )}
                         </div>
                     )}
                 </div>
             </div>
 
-            {/* ── Modal de ajuste (bottom sheet en móvil, centrado en escritorio) ── */}
+            {/* ── Modal de ajuste ── */}
             {modalOpen && (
                 <div
                     className="fixed inset-0 bg-black/60 z-[60] flex items-end md:items-center md:justify-center backdrop-blur-sm"
@@ -355,11 +388,17 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                         <div className="px-5 pb-4 border-b border-outline-variant/30 flex justify-between items-start">
                             <div>
                                 <h3 className="text-xl font-black text-on-surface">
-                                    {adjustForm.type === 'IN' ? 'Sumar piezas' : 'Restar piezas'}
+                                    {adjustForm.type === 'IN' ? 'Registrar entrada' : 'Registrar salida'}
                                 </h3>
-                                <p className="text-sm text-on-surface-variant font-medium mt-1">
+                                <p className="text-sm text-on-surface-variant font-medium mt-0.5">
                                     {product.name}
                                 </p>
+                                {allowFractions && (
+                                    <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded-full">
+                                        <span className="material-symbols-outlined text-[11px]">scatter_plot</span>
+                                        Permite fracciones · {unit}
+                                    </span>
+                                )}
                             </div>
                             <button
                                 onClick={() => setModalOpen(false)}
@@ -379,6 +418,7 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                             )}
 
                             <div className="flex flex-col sm:flex-row gap-4">
+                                {/* Tipo de operación (solo lectura) */}
                                 <div className="flex-1">
                                     <label className="text-sm font-bold text-on-surface-variant mb-2 block">
                                         Operación
@@ -395,19 +435,27 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                                     </div>
                                 </div>
 
+                                {/* Input de cantidad */}
                                 <div className="flex-1">
                                     <label htmlFor="adjust-quantity" className="text-sm font-bold text-on-surface-variant mb-2 block">
-                                        ¿Cuántas piezas?
+                                        ¿Cuánto{allowFractions ? 's' : 's'}? <span className="font-normal text-outline">({unit})</span>
                                     </label>
                                     <input
                                         id="adjust-quantity"
-                                        type="number"
-                                        min="1"
-                                        placeholder="Ej: 5"
+                                        type="text"
+                                        inputMode={allowFractions ? 'decimal' : 'numeric'}
+                                        placeholder={allowFractions ? 'Ej: 1.5' : 'Ej: 5'}
                                         value={adjustForm.quantity}
                                         onChange={(e) => setAdjustForm({ ...adjustForm, quantity: e.target.value })}
+                                        onKeyDown={handleQtyKeyDown}
+                                        onFocus={(e) => e.target.select()}
                                         className="w-full px-4 py-3.5 bg-surface-container-lowest border-2 border-outline-variant rounded-xl text-2xl font-black text-center focus:outline-none focus:border-secondary focus:ring-4 focus:ring-secondary/20 transition-all"
                                     />
+                                    {allowFractions && (
+                                        <p className="text-[11px] text-on-surface-variant/70 mt-1.5 text-center">
+                                            Puedes ingresar decimales: 0.5, 1.25, 2.75…
+                                        </p>
+                                    )}
                                 </div>
                             </div>
 

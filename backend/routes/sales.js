@@ -53,16 +53,19 @@ router.post('/', async (req, res) => {
 
         for (const item of items) {
             const productId = Number(item.product_id);
-            const quantity  = Number(item.quantity);
+            // Usar parseFloat para soportar cantidades fraccionadas
+            const quantity  = parseFloat(item.quantity);
 
-            if (!Number.isInteger(productId) || productId <= 0)
+            if (!productId || productId <= 0)
                 throw new Error('product_id inválido en uno de los items.');
-            if (!Number.isInteger(quantity) || quantity <= 0)
+            if (isNaN(quantity) || quantity <= 0)
                 throw new Error(`Cantidad inválida para el producto ${productId}.`);
 
             const pr = await client.query(
-                `SELECT id, name, stock, price FROM products
-                 WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+                `SELECT id, name, stock, price, allow_fractions
+                 FROM products
+                 WHERE id = $1 AND tenant_id = $2
+                 FOR UPDATE`,
                 [productId, tenant_id]
             );
 
@@ -71,23 +74,42 @@ router.post('/', async (req, res) => {
 
             const product = pr.rows[0];
 
-            if (Number(product.stock) < quantity)
+            // Validar que el producto acepte fracciones si la cantidad no es entera
+            if (!product.allow_fractions && !Number.isInteger(quantity)) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({
-                    error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}, solicitado: ${quantity}.`
+                    error: `"${product.name}" no permite cantidades fraccionadas. Usa cantidades enteras.`
                 });
+            }
 
-            const unitPrice = Number(product.price);
-            const subtotal  = Number((unitPrice * quantity).toFixed(2));
+            const currentStock = parseFloat(product.stock);
+
+            if (currentStock < quantity) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    error: `Stock insuficiente para "${product.name}". Disponible: ${currentStock}, solicitado: ${quantity}.`
+                });
+            }
+
+            const unitPrice = parseFloat(product.price);
+            const subtotal  = parseFloat((unitPrice * quantity).toFixed(2));
             total_amount   += subtotal;
 
-            normalizedItems.push({ product_id: product.id, quantity, unit_price: unitPrice, subtotal });
+            normalizedItems.push({
+                product_id: product.id,
+                quantity,
+                unit_price: unitPrice,
+                subtotal,
+            });
         }
 
-        total_amount = Number(total_amount.toFixed(2));
-        const paidAmount = Number(amount_paid || 0);
+        total_amount = parseFloat(total_amount.toFixed(2));
+        const paidAmount = parseFloat(amount_paid || 0);
 
-        if (payment_method === 'cash' && paidAmount < total_amount)
+        if (payment_method === 'cash' && paidAmount < total_amount) {
+            await client.query('ROLLBACK');
             return res.status(400).json({ error: 'El monto pagado en efectivo es menor al total.' });
+        }
 
         // ── 3. Insertar venta ─────────────────────────────────────────────────
         const saleResult = await client.query(
@@ -114,8 +136,11 @@ router.post('/', async (req, res) => {
                  VALUES ($1, $2, $3, $4, $5)`,
                 [sale.id, item.product_id, item.quantity, item.unit_price, item.subtotal]
             );
+            // Aritmética con NUMERIC en PostgreSQL: evita errores de punto flotante
             await client.query(
-                `UPDATE products SET stock = stock - $1 WHERE id = $2`,
+                `UPDATE products
+                 SET stock = ROUND(stock - $1, 3)
+                 WHERE id = $2`,
                 [item.quantity, item.product_id]
             );
         }
@@ -131,7 +156,7 @@ router.post('/', async (req, res) => {
             items:       normalizedItems,
             amount_paid: paidAmount,
             change:      payment_method === 'cash'
-                ? Number((paidAmount - total_amount).toFixed(2))
+                ? parseFloat((paidAmount - total_amount).toFixed(2))
                 : 0,
         });
 
@@ -156,7 +181,7 @@ router.get('/', async (req, res) => {
         const from   = req.query.from || null;
         const to     = req.query.to   || null;
 
-        const params  = [tenant_id];
+        const params = [tenant_id];
         let whereExtra = '';
 
         if (from) {
@@ -225,9 +250,8 @@ router.get('/:id', async (req, res) => {
         if (saleResult.rowCount === 0)
             return res.status(404).json({ error: 'La venta solicitada no existe.' });
 
-        // ── Incluir image_url del producto ────────────────────────────────────
         const itemsResult = await pool.query(
-            `SELECT si.*, p.name AS product_name, p.sku, p.image_url
+            `SELECT si.*, p.name AS product_name, p.sku, p.image_url, p.unit, p.allow_fractions
              FROM sale_items si
              JOIN products p ON p.id = si.product_id
              WHERE si.sale_id = $1
@@ -248,10 +272,6 @@ router.get('/:id', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/sales/:id/cancel — Cancelar una venta
-//
-// • Marca la venta con status = 'cancelled' y guarda la razón + quién canceló
-// • Devuelve el stock de cada artículo al inventario
-// • NO elimina ningún registro (trazabilidad completa)
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/:id/cancel', async (req, res) => {
     const client = await pool.connect();
@@ -262,11 +282,8 @@ router.post('/:id/cancel', async (req, res) => {
 
         await client.query('BEGIN');
 
-        // ── 1. Obtener la venta (con bloqueo para evitar doble cancelación) ──
         const saleResult = await client.query(
-            `SELECT * FROM sales
-             WHERE id = $1 AND tenant_id = $2
-             FOR UPDATE`,
+            `SELECT * FROM sales WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
             [id, tenant_id]
         );
 
@@ -278,27 +295,27 @@ router.post('/:id/cancel', async (req, res) => {
         if (sale.status === 'cancelled')
             return res.status(400).json({ error: 'Esta venta ya estaba cancelada.' });
 
-        // ── 2. Marcar como cancelada ──────────────────────────────────────────
         await client.query(
             `UPDATE sales
-             SET status           = 'cancelled',
-                 cancelled_at     = NOW(),
-                 cancelled_by     = $1,
+             SET status              = 'cancelled',
+                 cancelled_at        = NOW(),
+                 cancelled_by        = $1,
                  cancellation_reason = $2
              WHERE id = $3`,
             [user_id, reason.trim(), id]
         );
 
-        // ── 3. Obtener los artículos de la venta ──────────────────────────────
         const itemsResult = await client.query(
             `SELECT * FROM sale_items WHERE sale_id = $1`,
             [id]
         );
 
-        // ── 4. Regresar stock producto por producto ───────────────────────────
+        // Devolver stock con ROUND para mantener precisión NUMERIC
         for (const item of itemsResult.rows) {
             await client.query(
-                `UPDATE products SET stock = stock + $1 WHERE id = $2 AND tenant_id = $3`,
+                `UPDATE products
+                 SET stock = ROUND(stock + $1, 3)
+                 WHERE id = $2 AND tenant_id = $3`,
                 [item.quantity, item.product_id, tenant_id]
             );
         }
