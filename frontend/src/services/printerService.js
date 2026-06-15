@@ -365,3 +365,55 @@ export function cacheBtDevice(address, btDevice) {
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
+/* ═══════════════════════════════════════════════════════════════════════════
+   reconnectBTPrinters
+   Busca impresoras BT guardadas en localStorage y pre-conecta las que
+   el navegador ya tiene autorizadas. Se llama tras login o recarga.
+═══════════════════════════════════════════════════════════════════════════ */
+export async function reconnectBTPrinters() {
+    if (!navigator.bluetooth?.getDevices) {
+        console.info('[BT] getDevices no disponible en este navegador.');
+        return;
+    }
+
+    let saved = [];
+    try {
+        saved = JSON.parse(localStorage.getItem('pos_devices') || '[]');
+    } catch { return; }
+
+    const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
+    if (btPrinters.length === 0) {
+        console.info('[BT] No hay impresoras BT guardadas.');
+        return;
+    }
+
+    try {
+        const known = await navigator.bluetooth.getDevices();
+        console.info(`[BT] Dispositivos conocidos por el navegador: ${known.length}`);
+
+        for (const printer of btPrinters) {
+            const found = known.find(
+                d => d.id === printer.address || d.name === printer.address
+            );
+
+            if (!found) {
+                console.info(`[BT] "${printer.name}" no está en permisos del navegador — requiere vinculación manual.`);
+                continue;
+            }
+
+            try {
+                if (!found.gatt.connected) {
+                    try { found.gatt.disconnect(); } catch { /* noop */ }
+                    await new Promise(r => setTimeout(r, 400));
+                }
+                await found.gatt.connect();
+                cacheBtDevice(printer.address, found);
+                console.info(`[BT] ✓ Auto-reconectado: ${printer.name}`);
+            } catch (e) {
+                console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`);
+            }
+        }
+    } catch (e) {
+        console.info('[BT] Error en getDevices():', e.message);
+    }
+}

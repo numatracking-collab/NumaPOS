@@ -1,18 +1,129 @@
 import { useState, useEffect, useRef } from 'react';
 import CheckoutModal from './CheckoutModal';
 
-/* ─────────────────────────────────────────────────────────────────
-   CartItem — fila de carrito con input de cantidad editable
-───────────────────────────────────────────────────────────────── */
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OFFER_TYPE_LABEL = {
+    '2x1':       (o) => '2 × 1',
+    '3x2':       (o) => '3 × 2',
+    'nxm':       (o) => `Compra ${o.buy_qty} llévate ${o.get_qty}`,
+    'mitad':     (o) => '½ Precio',
+    'descuento': (o) => `${o.discount_pct}% OFF`,
+};
+
+function getOfferTypeLabel(offer) {
+    return OFFER_TYPE_LABEL[offer.type]?.(offer) ?? offer.type;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OfferBanner — banner inline que aparece cuando se detecta una oferta
+// ─────────────────────────────────────────────────────────────────────────────
+function OfferBanner({ pendingOffer, onApply, onDismiss }) {
+    const { offer, productName } = pendingOffer;
+    const typeLabel = getOfferTypeLabel(offer);
+
+    // Para tipos de precio, advertimos que el total visual puede diferir
+    // hasta que el backend soporte descuentos por oferta.
+    const isPriceBased = offer.type === 'mitad' || offer.type === 'descuento';
+
+    return (
+        <div className="
+            mx-md mt-sm mb-0 rounded-xl overflow-hidden
+            border border-secondary/30 bg-gradient-to-r from-secondary/10 to-secondary/5
+            shadow-sm animate-fade-in
+        ">
+            {/* Franja superior de color */}
+            <div className="h-1 bg-gradient-to-r from-secondary to-secondary/50" />
+
+            <div className="px-md py-sm">
+                {/* Encabezado */}
+                <div className="flex items-start justify-between gap-sm">
+                    <div className="flex items-center gap-xs">
+                        <span
+                            className="material-symbols-outlined text-[18px] text-secondary shrink-0"
+                            style={{ fontVariationSettings: "'FILL' 1" }}
+                        >
+                            local_offer
+                        </span>
+                        <p className="font-bold text-[13px] text-secondary leading-tight">
+                            ¡Oferta disponible!
+                        </p>
+                    </div>
+                    <button
+                        onClick={onDismiss}
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-high transition-colors shrink-0 -mt-0.5"
+                        title="Ignorar oferta"
+                    >
+                        <span className="material-symbols-outlined text-[15px]">close</span>
+                    </button>
+                </div>
+
+                {/* Detalle */}
+                <div className="mt-xs space-y-0.5">
+                    <p className="text-[12px] text-on-surface font-medium leading-snug">
+                        <span className="font-bold">{offer.name}</span>
+                        <span className="mx-1 text-outline">·</span>
+                        <span className="inline-flex items-center px-1.5 py-0.5 bg-secondary/15 text-secondary text-[10px] font-black rounded-full">
+                            {typeLabel}
+                        </span>
+                    </p>
+                    <p className="text-[11px] text-on-surface-variant">
+                        Aplica a: <span className="font-medium text-on-surface">{productName}</span>
+                    </p>
+                    {isPriceBased && (
+                        <p className="text-[10px] text-secondary/70 flex items-center gap-0.5 mt-xs">
+                            <span className="material-symbols-outlined text-[12px]">info</span>
+                            El precio con descuento se muestra en el ticket.
+                        </p>
+                    )}
+                </div>
+
+                {/* Acciones */}
+                <div className="flex gap-xs mt-sm">
+                    <button
+                        onClick={onApply}
+                        className="
+                            flex-1 flex items-center justify-center gap-xs
+                            py-xs px-sm bg-secondary text-on-secondary
+                            text-[12px] font-bold rounded-lg
+                            hover:bg-secondary/90 active:scale-[0.97]
+                            transition-all
+                        "
+                    >
+                        <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                            check_circle
+                        </span>
+                        Aplicar oferta
+                    </button>
+                    <button
+                        onClick={onDismiss}
+                        className="
+                            px-sm py-xs border border-outline-variant
+                            text-[12px] font-medium text-on-surface-variant rounded-lg
+                            hover:bg-surface-container-high active:scale-[0.97]
+                            transition-all
+                        "
+                    >
+                        No, gracias
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CartItem — fila del carrito con badge de oferta aplicada
+// ─────────────────────────────────────────────────────────────────────────────
 function CartItem({ item, onUpdateQuantity }) {
     const allowFractions = item.allow_fractions ?? false;
     const unit           = item.unit || 'pza.';
     const step           = allowFractions ? 0.1 : 1;
 
-    // Valor local del input (string para permitir edición libre)
     const [inputVal, setInputVal] = useState(String(item.quantity));
 
-    // Sincronizar si la cantidad cambia externamente (ej. se agrega el mismo producto de nuevo)
     useEffect(() => {
         setInputVal(
             allowFractions
@@ -21,23 +132,15 @@ function CartItem({ item, onUpdateQuantity }) {
         );
     }, [item.quantity, allowFractions]);
 
-    /* ── Helpers ── */
     const clampMin = (v) => Math.max(allowFractions ? 0.01 : 1, v);
+    const round    = (v) => allowFractions
+        ? Math.round(v * 1000) / 1000
+        : Math.floor(v);
 
-    const round = (v) =>
-        allowFractions
-            ? Math.round(v * 1000) / 1000   // 3 decimales para evitar errores de punto flotante
-            : Math.floor(v);
-
-    /* ── Commit: valida y aplica el valor del input ── */
     const commitInput = () => {
         const parsed = parseFloat(inputVal);
-        if (isNaN(parsed) || parsed <= 0) {
-            // Valor inválido → restaurar
-            setInputVal(String(item.quantity));
-            return;
-        }
-        const next = clampMin(round(parsed));
+        if (isNaN(parsed) || parsed <= 0) { setInputVal(String(item.quantity)); return; }
+        const next  = clampMin(round(parsed));
         const delta = next - item.quantity;
         if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
         setInputVal(String(next));
@@ -45,16 +148,13 @@ function CartItem({ item, onUpdateQuantity }) {
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter') e.target.blur();
-        // Bloquear letras no numéricas (permitir: dígitos, punto, retroceso, etc.)
-        const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','Tab','.', '-'];
+        const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','Tab','.','-'];
         if (!allowed.includes(e.key) && !/^\d$/.test(e.key)) e.preventDefault();
-        // Si no permite fracciones, bloquear el punto
         if (!allowFractions && e.key === '.') e.preventDefault();
     };
 
-    /* ── Botones +/- ── */
     const handleMinus = () => {
-        const next = clampMin(round(item.quantity - step));
+        const next  = clampMin(round(item.quantity - step));
         const delta = next - item.quantity;
         if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
     };
@@ -64,7 +164,10 @@ function CartItem({ item, onUpdateQuantity }) {
         onUpdateQuantity(item.id, next - item.quantity);
     };
 
-    const subtotal = item.price * item.quantity;
+    const subtotal     = item.price * item.quantity;
+    const hasOffer     = !!item.appliedOffer;
+    const isPriceBased = hasOffer && (item.appliedOffer.type === 'mitad' || item.appliedOffer.type === 'descuento');
+    const typeLabel    = hasOffer ? getOfferTypeLabel(item.appliedOffer) : null;
 
     return (
         <div className="flex gap-3 group animate-fade-in">
@@ -90,40 +193,67 @@ function CartItem({ item, onUpdateQuantity }) {
                     <span className="font-bold text-[13px] text-on-surface truncate leading-tight">
                         {item.name}
                     </span>
-                    <span className="font-bold text-[14px] shrink-0">
-                        ${subtotal.toFixed(2)}
-                    </span>
+                    <div className="text-right shrink-0">
+                        <span className="font-bold text-[14px]">${subtotal.toFixed(2)}</span>
+                        {/* Precio original tachado si hay descuento de precio */}
+                        {isPriceBased && item.originalPrice && (
+                            <p className="text-[10px] text-on-surface-variant line-through">
+                                ${(item.originalPrice * item.quantity).toFixed(2)}
+                            </p>
+                        )}
+                    </div>
                 </div>
 
                 {/* Precio unitario */}
-                <span className="text-[10px] text-on-surface-variant">
-                    ${Number(item.price).toFixed(2)} / {unit}
-                </span>
+                <div className="flex items-center gap-xs">
+                    <span className="text-[10px] text-on-surface-variant">
+                        ${Number(item.price).toFixed(2)} / {unit}
+                    </span>
+                    {isPriceBased && item.originalPrice && (
+                        <span className="text-[10px] text-on-surface-variant line-through">
+                            ${Number(item.originalPrice).toFixed(2)}
+                        </span>
+                    )}
+                </div>
+
+                {/* Badge de oferta aplicada */}
+                {hasOffer && (
+                    <div className="flex items-center gap-xs mt-0.5">
+                        <span className="flex items-center gap-0.5 text-[10px] font-bold text-secondary bg-secondary/10 px-1.5 py-0.5 rounded-full">
+                            <span
+                                className="material-symbols-outlined text-[11px]"
+                                style={{ fontVariationSettings: "'FILL' 1" }}
+                            >
+                                local_offer
+                            </span>
+                            {typeLabel} aplicado
+                        </span>
+                    </div>
+                )}
 
                 {/* Controles de cantidad */}
                 <div className="flex items-center justify-between mt-1">
-                    <div className="flex items-center bg-surface-container-low rounded-lg border border-outline-variant overflow-hidden">
-                        {/* Botón − */}
+                    <div className={`flex items-center rounded-lg border overflow-hidden ${
+                        hasOffer
+                            ? 'border-secondary/40 bg-secondary/5'
+                            : 'border-outline-variant bg-surface-container-low'
+                    }`}>
                         <button
                             onClick={handleMinus}
                             className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0"
                         >
                             <span className="material-symbols-outlined text-sm">remove</span>
                         </button>
-
-                        {/* Input editable */}
                         <input
                             type="text"
                             inputMode={allowFractions ? 'decimal' : 'numeric'}
                             value={inputVal}
-                            onChange={(e) => setInputVal(e.target.value)}
+                            onChange={e => setInputVal(e.target.value)}
                             onBlur={commitInput}
                             onKeyDown={handleKeyDown}
-                            onFocus={(e) => e.target.select()}
+                            onFocus={e => e.target.select()}
                             className="w-14 h-8 text-center font-bold text-[13px] bg-transparent focus:outline-none focus:bg-secondary/5 transition-colors"
                         />
-
-                        {/* Botón + */}
                         <button
                             onClick={handlePlus}
                             className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0"
@@ -150,9 +280,9 @@ function CartItem({ item, onUpdateQuantity }) {
     );
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   TicketSidebar
-───────────────────────────────────────────────────────────────── */
+// ─────────────────────────────────────────────────────────────────────────────
+// TicketSidebar
+// ─────────────────────────────────────────────────────────────────────────────
 export default function TicketSidebar({
     cart,
     products,
@@ -162,6 +292,10 @@ export default function TicketSidebar({
     onAddProduct,
     cajaId,
     serie,
+    // ── Props de oferta ──────────────────────────────────────────────────────
+    pendingOffer,
+    onApplyOffer,
+    onDismissOffer,
 }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [nextFolio,   setNextFolio]   = useState(null);
@@ -178,7 +312,7 @@ export default function TicketSidebar({
         if (serie) setNextFolio(serie.next_folio);
     }, [serie]);
 
-    // ── Cerrar resultados al click fuera ─────────────────────────────────────
+    // Cerrar resultados al click fuera
     useEffect(() => {
         const handler = (e) => {
             if (searchRef.current && !searchRef.current.contains(e.target))
@@ -188,7 +322,7 @@ export default function TicketSidebar({
         return () => document.removeEventListener('mousedown', handler);
     }, []);
 
-    // ── Búsqueda reactiva ─────────────────────────────────────────────────────
+    // Búsqueda reactiva
     useEffect(() => {
         const q = query.trim().toLowerCase();
         if (!q) { setResults([]); setShowResults(false); return; }
@@ -204,7 +338,7 @@ export default function TicketSidebar({
         setShowResults(true);
     }, [query, products]);
 
-    // ── Manejar Enter / escaneo ───────────────────────────────────────────────
+    // Manejar Enter / escaneo
     const handleKeyDown = (e) => {
         if (e.key !== 'Enter') return;
         const q = query.trim().toLowerCase();
@@ -266,7 +400,7 @@ export default function TicketSidebar({
                     </button>
                 </div>
 
-                {/* ── Barra de búsqueda / escaneo ── */}
+                {/* Barra de búsqueda / escaneo */}
                 <div className="relative" ref={searchRef}>
                     <div className="flex items-center gap-2 px-3 py-2 bg-white border border-outline-variant rounded-xl focus-within:ring-2 focus-within:ring-secondary focus-within:border-secondary transition-all">
                         <span className="material-symbols-outlined text-[18px] text-outline shrink-0">
@@ -276,7 +410,7 @@ export default function TicketSidebar({
                             ref={inputRef}
                             type="text"
                             value={query}
-                            onChange={(e) => setQuery(e.target.value)}
+                            onChange={e => setQuery(e.target.value)}
                             onKeyDown={handleKeyDown}
                             onFocus={() => results.length > 0 && setShowResults(true)}
                             placeholder="Escanear o buscar producto..."
@@ -304,19 +438,16 @@ export default function TicketSidebar({
                                         onClick={() => addProduct(p)}
                                         className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-surface-container-low transition-colors text-left border-b border-outline-variant/20 last:border-none"
                                     >
-                                        {/* Thumbnail */}
                                         <div className="w-9 h-9 rounded-lg bg-surface-container-low border border-outline-variant/30 overflow-hidden shrink-0 flex items-center justify-center">
                                             {img
                                                 ? <img src={img} alt={p.name} className="w-full h-full object-cover" />
                                                 : <span className="material-symbols-outlined text-[16px] text-outline">image</span>
                                             }
                                         </div>
-                                        {/* Info */}
                                         <div className="flex-1 min-w-0">
                                             <p className="text-[13px] font-medium text-on-surface truncate">{p.name}</p>
                                             <p className="text-[11px] text-outline font-mono">{p.sku || '—'}</p>
                                         </div>
-                                        {/* Precio + stock + badge fracción */}
                                         <div className="text-right shrink-0">
                                             <p className="text-[13px] font-bold text-secondary">${Number(p.price).toFixed(2)}</p>
                                             <p className="text-[10px] text-outline">{p.stock} {unit}</p>
@@ -343,6 +474,15 @@ export default function TicketSidebar({
                 </div>
             </div>
 
+            {/* ── Banner de oferta detectada ── */}
+            {pendingOffer && (
+                <OfferBanner
+                    pendingOffer={pendingOffer}
+                    onApply={onApplyOffer}
+                    onDismiss={onDismissOffer}
+                />
+            )}
+
             {/* ── Items del carrito ── */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-md space-y-md">
                 {cart.length === 0 ? (
@@ -351,7 +491,7 @@ export default function TicketSidebar({
                         <p className="font-medium text-lg">El carrito está vacío</p>
                     </div>
                 ) : (
-                    cart.map((item) => (
+                    cart.map(item => (
                         <CartItem
                             key={item.id}
                             item={item}

@@ -1,20 +1,128 @@
 import { useState, useEffect } from 'react';
-import TopAppBar from '../components/TopAppBar';
+import TopAppBar    from '../components/TopAppBar';
 import CategoryTabs from '../components/CategoryTabs';
-import ProductCard from '../components/ProductCard';
+import ProductCard  from '../components/ProductCard';
 import TicketSidebar from '../components/TicketSidebar';
-import BottomNav from '../components/BottomNav';
-import { inventoryService as productService } from '../services/api';
+import BottomNav    from '../components/BottomNav';
+import { inventoryService as productService, offersService } from '../services/api';
+
 const LS_CART = 'numa_pos_cart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers de oferta
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Devuelve la primera oferta activa que aplica al producto en este momento.
+ * Verifica: status, producto, día de la semana, horario y rango de fechas.
+ */
+function findApplicableOffer(product, offers) {
+    const now         = new Date();
+    const currentDay  = now.getDay();                       // 0 Dom … 6 Sáb
+    const currentTime = now.toTimeString().slice(0, 5);     // "HH:MM"
+    const currentDate = now.toISOString().slice(0, 10);     // "YYYY-MM-DD"
+
+    return offers.find(offer => {
+        if (offer.status !== 'active') return false;
+
+        // ¿El producto está en esta oferta?
+        if (!offer.products?.some(p => p.id === product.id)) return false;
+
+        // Día de la semana activo
+        if (!offer.active_days?.includes(currentDay)) return false;
+
+        // Horario
+        if (offer.time_start && currentTime < offer.time_start) return false;
+        if (offer.time_end   && currentTime > offer.time_end)   return false;
+
+        // Rango de fechas
+        if (offer.date_start && currentDate < offer.date_start) return false;
+        if (offer.date_end   && currentDate > offer.date_end)   return false;
+
+        return true;
+    }) ?? null;
+}
+
+/**
+ * Aplica la oferta al item dentro del carrito.
+ *
+ * Tipos de cantidad (2x1, 3x2, nxm):
+ *   Ajusta quantity al mínimo necesario para activar la promo.
+ *
+ * Tipos de precio (mitad, descuento):
+ *   Modifica `price` en el carrito para reflejarlo visualmente.
+ *   ⚠️  El backend actual obtiene el precio desde la BD; para que el
+ *       descuento impacte la venta real se necesitará soporte en el endpoint
+ *       POST /api/sales (pasar offer_id o unit_price_override).
+ */
+function applyOfferToCart(cart, productId, offer) {
+    return cart.map(item => {
+        if (item.id !== productId) return item;
+        if (item.appliedOffer?.id === offer.id) return item; // ya aplicada
+
+        switch (offer.type) {
+            case '2x1': {
+                // Llevar cantidad al próximo múltiplo de 2 ≥ 2
+                const newQty = Math.max(2, Math.ceil(item.quantity / 2) * 2);
+                return { ...item, quantity: newQty, appliedOffer: offer };
+            }
+            case '3x2': {
+                // Llevar cantidad al próximo múltiplo de 3 ≥ 3
+                const newQty = Math.max(3, Math.ceil(item.quantity / 3) * 3);
+                return { ...item, quantity: newQty, appliedOffer: offer };
+            }
+            case 'nxm': {
+                // Compra buy_qty llévate get_qty extra gratis
+                const buyQ  = offer.buy_qty || 1;
+                const getQ  = offer.get_qty || 1;
+                const cycle = buyQ + getQ;
+                const sets  = Math.max(1, Math.ceil(item.quantity / buyQ));
+                const newQty = sets * cycle;
+                return { ...item, quantity: newQty, appliedOffer: offer };
+            }
+            case 'mitad': {
+                const origPrice = item.originalPrice ?? item.price;
+                return {
+                    ...item,
+                    price:         parseFloat((origPrice * 0.5).toFixed(2)),
+                    originalPrice: origPrice,
+                    appliedOffer:  offer,
+                };
+            }
+            case 'descuento': {
+                const pct       = offer.discount_pct || 0;
+                const origPrice = item.originalPrice ?? item.price;
+                return {
+                    ...item,
+                    price:         parseFloat((origPrice * (1 - pct / 100)).toFixed(2)),
+                    originalPrice: origPrice,
+                    appliedOffer:  offer,
+                };
+            }
+            default:
+                return item;
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POSPage
+// ─────────────────────────────────────────────────────────────────────────────
 export default function POSPage() {
     const [activeCategory, setActiveCategory] = useState(null);
     const [products,       setProducts]       = useState([]);
+    const [offers,         setOffers]         = useState([]);
     const [loading,        setLoading]        = useState(true);
     const [showToast,      setShowToast]      = useState(false);
     const [selectedCaja,   setSelectedCaja]   = useState(null);
     const [selectedSerie,  setSelectedSerie]  = useState(null);
     const [mobileView,     setMobileView]     = useState('products');
+
+    /**
+     * Oferta detectada pendiente de confirmar.
+     * Shape: { offer: Offer, productId: number, productName: string } | null
+     */
+    const [pendingOffer, setPendingOffer] = useState(null);
 
     const [cart, setCart] = useState(() => {
         try {
@@ -23,40 +131,85 @@ export default function POSPage() {
         } catch { return []; }
     });
 
+    // Persistir carrito
     useEffect(() => {
         try { localStorage.setItem(LS_CART, JSON.stringify(cart)); } catch {}
     }, [cart]);
 
-    useEffect(() => { loadProducts(); }, []);
+    useEffect(() => {
+        loadProducts();
+        loadOffers();
+    }, []);
 
+    // ── Carga de datos ────────────────────────────────────────────────────────
     const loadProducts = async () => {
         setLoading(true);
         try {
             const data = await productService.getAll();
             setProducts(data);
-        } catch (error) {
-            console.error('Error al cargar los productos:', error);
+        } catch (err) {
+            console.error('Error al cargar los productos:', err);
         } finally {
             setLoading(false);
         }
     };
 
+    const loadOffers = async () => {
+        try {
+            const data = await offersService.getAll({ status: 'active' });
+            setOffers(Array.isArray(data) ? data : []);
+        } catch (err) {
+            console.error('Error al cargar las ofertas:', err);
+        }
+    };
+
+    // ── Filtro de categoría ───────────────────────────────────────────────────
     const filteredProducts = activeCategory
         ? products.filter(p => p.category_id === activeCategory)
         : products;
 
+    // ── Agregar producto ──────────────────────────────────────────────────────
     const handleAddProduct = (product) => {
-        setCart((prev) => {
+        setCart(prev => {
             const existing = prev.find(i => i.id === product.id);
-            if (existing) return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i);
+            if (existing) return prev.map(i =>
+                i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i
+            );
             return [...prev, { ...product, quantity: 1 }];
         });
+
         setShowToast(true);
         setTimeout(() => setShowToast(false), 2000);
+
+        // Detectar oferta aplicable —— solo si:
+        //   1. No hay ya una oferta pendiente esperando confirmación
+        //   2. Este producto no tiene ya una oferta aplicada en el carrito
+        const alreadyApplied = cart.some(i => i.id === product.id && i.appliedOffer);
+        if (!pendingOffer && !alreadyApplied) {
+            const match = findApplicableOffer(product, offers);
+            if (match) {
+                setPendingOffer({
+                    offer:       match,
+                    productId:   product.id,
+                    productName: product.name,
+                });
+            }
+        }
     };
 
+    // ── Aplicar oferta confirmada ─────────────────────────────────────────────
+    const handleApplyOffer = () => {
+        if (!pendingOffer) return;
+        setCart(prev => applyOfferToCart(prev, pendingOffer.productId, pendingOffer.offer));
+        setPendingOffer(null);
+    };
+
+    // ── Descartar oferta ──────────────────────────────────────────────────────
+    const handleDismissOffer = () => setPendingOffer(null);
+
+    // ── Actualizar cantidad ───────────────────────────────────────────────────
     const handleUpdateQuantity = (id, amount) => {
-        setCart((prev) =>
+        setCart(prev =>
             prev.map(item => {
                 if (item.id !== id) return item;
                 const newQty = item.quantity + amount;
@@ -65,18 +218,31 @@ export default function POSPage() {
         );
     };
 
+    // ── Limpiar carrito ───────────────────────────────────────────────────────
     const handleClearCart = () => {
         setCart([]);
+        setPendingOffer(null);
         try { localStorage.removeItem(LS_CART); } catch {}
     };
 
     const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
-    // Altura de las pestañas en móvil — espacio que deben respetar las vistas
-    const TAB_H = 40; // px
+    // ── Sidebar props compartidos ─────────────────────────────────────────────
+    const sidebarProps = {
+        cart,
+        products,
+        onUpdateQuantity: handleUpdateQuantity,
+        onClearCart:      handleClearCart,
+        onSaleSuccess:    loadProducts,
+        onAddProduct:     handleAddProduct,
+        cajaId:           selectedCaja?.id ?? null,
+        serie:            selectedSerie,
+        pendingOffer,
+        onApplyOffer:     handleApplyOffer,
+        onDismissOffer:   handleDismissOffer,
+    };
 
     return (
-        // ── La clave: h-screen con flex column, cada hijo shrink-0 excepto main
         <div className="h-screen flex flex-col overflow-hidden bg-background">
 
             <TopAppBar
@@ -86,7 +252,7 @@ export default function POSPage() {
             />
 
             {/* ══════════════════════════════════════════════════════════════
-                DESKTOP — layout original intacto
+                DESKTOP
             ══════════════════════════════════════════════════════════════ */}
             <main className="hidden md:flex flex-1 overflow-hidden w-full bg-background">
                 <CategoryTabs activeCategory={activeCategory} setActiveCategory={setActiveCategory} />
@@ -113,28 +279,16 @@ export default function POSPage() {
                     )}
                 </section>
 
-                <TicketSidebar
-                    cart={cart}
-                    products={products}
-                    onUpdateQuantity={handleUpdateQuantity}
-                    onClearCart={handleClearCart}
-                    onSaleSuccess={loadProducts}
-                    onAddProduct={handleAddProduct}
-                    cajaId={selectedCaja?.id ?? null}
-                    serie={selectedSerie}
-                />
+                <TicketSidebar {...sidebarProps} />
             </main>
 
             {/* ══════════════════════════════════════════════════════════════
-                MÓVIL — flex column: [pestañas fijas arriba] + [contenido]
-                Las pestañas están ARRIBA del contenido en el flujo normal,
-                así nunca se enciman.
+                MÓVIL
             ══════════════════════════════════════════════════════════════ */}
             <div className="md:hidden flex-1 flex flex-col overflow-hidden min-h-0">
 
-                {/* ── Pestañas tipo carpeta — SIEMPRE VISIBLES, en el flujo ── */}
+                {/* Pestañas */}
                 <div className="flex items-end shrink-0 bg-slate-200 border-b-2 border-secondary/20 px-4 pt-1 z-30">
-                    {/* Pestaña Productos */}
                     <button
                         onClick={() => setMobileView('products')}
                         className={`
@@ -143,8 +297,7 @@ export default function POSPage() {
                             transition-all duration-200
                             ${mobileView === 'products'
                                 ? 'bg-slate-50 text-secondary shadow-sm z-20'
-                                : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'
-                            }
+                                : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'}
                         `}
                         style={{ marginRight: '-2px', clipPath: 'polygon(4px 0%, calc(100% - 4px) 0%, 100% 100%, 0% 100%)' }}
                     >
@@ -155,7 +308,6 @@ export default function POSPage() {
                         Productos
                     </button>
 
-                    {/* Pestaña Ticket */}
                     <button
                         onClick={() => setMobileView('ticket')}
                         className={`
@@ -164,8 +316,7 @@ export default function POSPage() {
                             transition-all duration-200
                             ${mobileView === 'ticket'
                                 ? 'bg-white text-secondary shadow-sm z-20'
-                                : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'
-                            }
+                                : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'}
                         `}
                         style={{ marginLeft: '-2px', clipPath: 'polygon(4px 0%, calc(100% - 4px) 0%, 100% 100%, 0% 100%)' }}
                     >
@@ -182,7 +333,6 @@ export default function POSPage() {
                     </button>
                 </div>
 
-                {/* ── Contenido de la vista activa — ocupa el resto del espacio ── */}
                 <div className="flex-1 overflow-hidden relative min-h-0">
 
                     {/* Vista Productos */}
@@ -209,11 +359,7 @@ export default function POSPage() {
                                         </div>
                                     ) : (
                                         filteredProducts.map(product => (
-                                            <ProductCard
-                                                key={product.id}
-                                                product={product}
-                                                onAdd={handleAddProduct}
-                                            />
+                                            <ProductCard key={product.id} product={product} onAdd={handleAddProduct} />
                                         ))
                                     )}
                                 </div>
@@ -225,21 +371,11 @@ export default function POSPage() {
                     <div className={`absolute inset-0 transition-transform duration-300 ease-in-out ${
                         mobileView === 'ticket' ? 'translate-x-0' : 'translate-x-full'
                     }`}>
-                        <TicketSidebar
-                            cart={cart}
-                            products={products}
-                            onUpdateQuantity={handleUpdateQuantity}
-                            onClearCart={handleClearCart}
-                            onSaleSuccess={loadProducts}
-                            onAddProduct={handleAddProduct}
-                            cajaId={selectedCaja?.id ?? null}
-                            serie={selectedSerie}
-                        />
+                        <TicketSidebar {...sidebarProps} />
                     </div>
                 </div>
             </div>
 
-            {/* BottomNav — siempre en el flujo, nunca tapado */}
             <BottomNav />
 
             {/* Toast */}
