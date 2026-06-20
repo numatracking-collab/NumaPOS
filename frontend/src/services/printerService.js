@@ -4,9 +4,7 @@
 
 import { buildSaleTicket } from './ticketBuilder';
 
-/* ── Perfiles BLE de impresoras térmicas conocidas ───────────────────────
-   Ordenados por prioridad: tu Ofichido primero, luego genéricos.
-   ──────────────────────────────────────────────────────────────────────── */
+/* ── Perfiles BLE de impresoras térmicas conocidas ───────────────────────── */
 export const PRINTER_PROFILES = [
   { service: '0000fff0-0000-1000-8000-00805f9b34fb', chr: '0000fff2-0000-1000-8000-00805f9b34fb' },
   { service: '0000ff80-0000-1000-8000-00805f9b34fb', chr: '0000ff82-0000-1000-8000-00805f9b34fb' },
@@ -17,8 +15,8 @@ export const PRINTER_PROFILES = [
 
 export const PRINTER_SERVICE_UUIDS = PRINTER_PROFILES.map(p => p.service);
 
-/* ── Caché de dispositivos y perfiles ────────────────────────────────── */
-const _deviceCache  = new Map();
+/* ── Caché de dispositivos y perfiles ────────────────────────────────────── */
+const _deviceCache = new Map();
 const _profileCache = new Map();
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -31,6 +29,34 @@ function withTimeout(promise, ms, label) {
       setTimeout(() => reject(new Error(`Timeout: ${label}`)), ms)
     ),
   ]);
+}
+
+/* ── Normaliza timestamp de PostgreSQL a UTC ─────────────────────────────────
+   PostgreSQL puede devolver "2024-01-15 10:38:00" sin zona horaria.
+   JavaScript lo parsea como hora local, causando diferencias de horas.
+   Forzamos UTC añadiendo 'Z' si no tiene info de zona.
+────────────────────────────────────────────────────────────────────────────── */
+function normalizeTimestamp(ts) {
+  if (!ts) return new Date().toISOString();
+  const s = String(ts);
+  // Ya tiene info de timezone (Z o +HH:MM)
+  if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) return s;
+  // Sin timezone → tratar como UTC
+  return s.replace(' ', 'T') + 'Z';
+}
+
+/* ── Reconstruye la etiqueta de oferta desde el tipo guardado en BD ──────────
+   Usado en reimpresión, donde solo tenemos offer_type e offer_name del JOIN.
+────────────────────────────────────────────────────────────────────────────── */
+function buildOfferLabel(offerType, item = {}) {
+  switch (offerType) {
+    case '2x1': return '2 × 1';
+    case '3x2': return '3 × 2';
+    case 'nxm': return `Compra ${item.buy_qty || '?'} llévate ${item.get_qty || '?'}`;
+    case 'mitad': return '½ Precio';
+    case 'descuento': return item.offer_name ? `${item.offer_name}` : 'Descuento';
+    default: return offerType || 'PROMO';
+  }
 }
 
 async function findWritableCharacteristic(server, address) {
@@ -116,10 +142,9 @@ async function ensureConnection(btRef, address) {
 }
 
 async function writeChunked(chr, data, btRef, address) {
-  const CHUNK_SIZE  = 20;
+  const CHUNK_SIZE = 20;
   const CHUNK_DELAY = 120;
   const WRITE_TIMEOUT = 5000;
-
   const useWrite = chr.properties.write;
 
   console.info(
@@ -258,7 +283,7 @@ async function getActivePrinter() {
   return { device: printer, btRef };
 }
 
-/* ── Utilidad interna: construir saleData y enviar a la impresora ─────── */
+/* ── Utilidad interna: enviar bytes a la impresora ───────────────────────── */
 async function _sendTicket(saleData, device, btRef) {
   const width = device.config?.ticketWidth ?? '58';
   const bytes = buildSaleTicket(saleData, width);
@@ -283,33 +308,17 @@ async function _sendTicket(saleData, device, btRef) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    printSaleTicket  —  Imprime al terminar una NUEVA venta (desde CheckoutModal)
+
+   FIX: Ya no reconstruye saleData desde cero. CheckoutModal ya arma el objeto
+   completo (con items enriquecidos, offer_label, descuentos, cajero, caja).
+   Solo lo pasamos directamente a _sendTicket.
    ═══════════════════════════════════════════════════════════════════════════ */
-export async function printSaleTicket(saleResponse, extra = {}) {
+export async function printSaleTicket(saleData) {
   try {
     const result = await getActivePrinter();
     if (!result) return { ok: false, error: 'No hay impresora con impresión automática habilitada.' };
 
     const { device, btRef } = result;
-
-    const saleData = {
-      folio:          saleResponse.folio              ?? '',
-      created_at:     saleResponse.sale?.created_at   ?? new Date().toISOString(),
-      payment_method: extra.paymentMethod             ?? saleResponse.payment_method ?? 'cash',
-      amount_paid:    extra.amountPaid                ?? saleResponse.amount_paid    ?? extra.total ?? 0,
-      change:         saleResponse.change             ?? 0,
-      total:          extra.total                     ?? 0,
-      subtotal:       extra.total                     ?? 0,
-      discount:       0,
-      items: (extra.cart ?? []).map(i => ({
-        sku:      i.sku      ?? '',
-        name:     i.name     ?? '',
-        quantity: i.quantity ?? 1,
-        price:    i.price    ?? 0,
-      })),
-      cashier: extra.cashier ?? '',
-      caja:    extra.caja    ?? '',
-    };
-
     return await _sendTicket(saleData, device, btRef);
   } catch (err) {
     return { ok: false, error: err.message };
@@ -319,6 +328,12 @@ export async function printSaleTicket(saleResponse, extra = {}) {
 /* ═══════════════════════════════════════════════════════════════════════════
    reprintSaleTicket  —  Reimprime desde el Historial de ventas
    Acepta el objeto sale + items tal como los devuelve salesService.get(id).
+
+   FIXES:
+   - product_name: la API devuelve p.name AS product_name, no i.name
+   - timezone: normaliza timestamp de PostgreSQL a UTC antes de parsear
+   - offer_label: reconstruye desde offer_type (join en backend)
+   - cashier: usa cashier_name (requiere JOIN en GET /api/sales/:id)
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function reprintSaleTicket(sale, items = []) {
   try {
@@ -330,22 +345,35 @@ export async function reprintSaleTicket(sale, items = []) {
     const total = Number(sale.total_amount ?? 0);
 
     const saleData = {
-      folio:          sale.folio          ?? '',
-      created_at:     sale.created_at     ?? new Date().toISOString(),
+      folio: sale.folio ?? '',
+      // FIX timezone: normalizar antes de pasar a ticketBuilder
+      created_at: normalizeTimestamp(sale.created_at),
       payment_method: sale.payment_method ?? 'cash',
-      amount_paid:    total,                          // en reimpresión no tenemos el monto pagado
-      change:         0,
+      // Si se guarda amount_paid en la BD, usarlo; si no, asumir total
+      amount_paid: Number(sale.amount_paid ?? total),
+      change: Number(sale.change_amount ?? sale.change ?? 0),
       total,
-      subtotal:       total,
-      discount:       0,
-      items: items.map(i => ({
-        sku:      i.sku        ?? '',
-        name:     i.name       ?? '',
-        quantity: Number(i.quantity   ?? 1),
-        price:    Number(i.unit_price ?? 0),          // campo del detalle de venta
-      })),
-      cashier: sale.cashier_name ?? sale.user_name ?? '',
-      caja:    sale.caja_name    ?? '',
+      subtotal: total,
+      discount: 0,
+      customer_name: sale.customer_name ?? '',
+      // FIX cashier: requiere que GET /api/sales/:id haga JOIN con users
+      cashier: sale.cashier_name ?? '',
+      caja: sale.caja_name ?? '',
+      items: items.map(i => {
+        const discount = Number(i.discount_amount ?? 0);
+        return {
+          sku: i.sku ?? '',
+          // FIX product name: la API devuelve product_name, no name
+          name: i.product_name ?? i.name ?? '',
+          quantity: Number(i.quantity ?? 1),
+          price: Number(i.unit_price ?? 0),
+          discount_amount: discount,
+          // FIX offer_label: reconstruir desde offer_type del JOIN en BD
+          offer_label: i.offer_type
+            ? buildOfferLabel(i.offer_type, i)
+            : null,
+        };
+      }),
     };
 
     return await _sendTicket(saleData, device, btRef);
@@ -361,59 +389,60 @@ export function cacheBtDevice(address, btDevice) {
   if (address && btDevice) _deviceCache.set(address, btDevice);
 }
 
-/* ── Utilidad ─────────────────────────────────────────────────────────── */
+/* ── Utilidad ─────────────────────────────────────────────────────────────── */
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    reconnectBTPrinters
    Busca impresoras BT guardadas en localStorage y pre-conecta las que
    el navegador ya tiene autorizadas. Se llama tras login o recarga.
-═══════════════════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════════════════ */
 export async function reconnectBTPrinters() {
-    if (!navigator.bluetooth?.getDevices) {
-        console.info('[BT] getDevices no disponible en este navegador.');
-        return;
-    }
+  if (!navigator.bluetooth?.getDevices) {
+    console.info('[BT] getDevices no disponible en este navegador.');
+    return;
+  }
 
-    let saved = [];
-    try {
-        saved = JSON.parse(localStorage.getItem('pos_devices') || '[]');
-    } catch { return; }
+  let saved = [];
+  try {
+    saved = JSON.parse(localStorage.getItem('pos_devices') || '[]');
+  } catch { return; }
 
-    const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
-    if (btPrinters.length === 0) {
-        console.info('[BT] No hay impresoras BT guardadas.');
-        return;
-    }
+  const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
+  if (btPrinters.length === 0) {
+    console.info('[BT] No hay impresoras BT guardadas.');
+    return;
+  }
 
-    try {
-        const known = await navigator.bluetooth.getDevices();
-        console.info(`[BT] Dispositivos conocidos por el navegador: ${known.length}`);
+  try {
+    const known = await navigator.bluetooth.getDevices();
+    console.info(`[BT] Dispositivos conocidos por el navegador: ${known.length}`);
 
-        for (const printer of btPrinters) {
-            const found = known.find(
-                d => d.id === printer.address || d.name === printer.address
-            );
+    for (const printer of btPrinters) {
+      const found = known.find(
+        d => d.id === printer.address || d.name === printer.address
+      );
 
-            if (!found) {
-                console.info(`[BT] "${printer.name}" no está en permisos del navegador — requiere vinculación manual.`);
-                continue;
-            }
+      if (!found) {
+        console.info(`[BT] "${printer.name}" no está en permisos del navegador — requiere vinculación manual.`);
+        continue;
+      }
 
-            try {
-                if (!found.gatt.connected) {
-                    try { found.gatt.disconnect(); } catch { /* noop */ }
-                    await new Promise(r => setTimeout(r, 400));
-                }
-                await found.gatt.connect();
-                cacheBtDevice(printer.address, found);
-                console.info(`[BT] ✓ Auto-reconectado: ${printer.name}`);
-            } catch (e) {
-                console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`);
-            }
+      try {
+        if (!found.gatt.connected) {
+          try { found.gatt.disconnect(); } catch { /* noop */ }
+          await new Promise(r => setTimeout(r, 400));
         }
-    } catch (e) {
-        console.info('[BT] Error en getDevices():', e.message);
+        await found.gatt.connect();
+        cacheBtDevice(printer.address, found);
+        console.info(`[BT] ✓ Auto-reconectado: ${printer.name}`);
+      } catch (e) {
+        console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`);
+      }
     }
+  } catch (e) {
+    console.info('[BT] Error en getDevices():', e.message);
+  }
 }

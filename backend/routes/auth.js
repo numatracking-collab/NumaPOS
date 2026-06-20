@@ -64,7 +64,7 @@ router.post('/register', async (req, res) => {
         // 3. Crear la licencia (plan free, activa, expira en 30 días)
         const licenseKey = generateLicenseKey();
         const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 30);
+        expiresAt.setDate(expiresAt.getDate() + 7);
 
         await query(
             'INSERT INTO licences (tenant_id, plan_type, status, expires_at) VALUES ($1, $2, $3, $4)',
@@ -85,8 +85,10 @@ router.post('/register', async (req, res) => {
             tenantId: tenant.id,
             userId: user.id,
             email: user.email,
-            role: user.role
+            name: user.name,       // ← agregar
+            role: user.role,
         });
+
 
         // 6. Responder
         res.status(201).json({
@@ -156,18 +158,18 @@ router.get('/me', async (req, res) => {
         const row = result.rows[0];
         res.json({
             user: {
-                id:    row.id,
-                name:  row.name,
+                id: row.id,
+                name: row.name,
                 email: row.email,
-                role:  row.role,
+                role: row.role,
             },
             tenant: {
-                id:   row.tenant_id,
+                id: row.tenant_id,
                 name: row.tenant_name,
             },
             license: row.plan_type ? {
-                plan:      row.plan_type,
-                status:    row.license_status,
+                plan: row.plan_type,
+                status: row.license_status,
                 expiresAt: row.expires_at,
             } : null,
         });
@@ -226,7 +228,8 @@ router.post('/login', async (req, res) => {
             tenantId: row.tenant_id,
             userId: row.user_id,
             email: row.email,
-            role: row.role
+            name: row.user_name,   // ← agregar
+            role: row.role,
         });
 
         // 5. Responder

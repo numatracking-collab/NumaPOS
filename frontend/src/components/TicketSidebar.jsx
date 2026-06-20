@@ -2,65 +2,84 @@ import { useState, useEffect, useRef } from 'react';
 import CheckoutModal from './CheckoutModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// effectiveSubtotal — lo que el cliente realmente paga por esta línea.
+//
+// item.price  = precio original de catálogo (NUNCA se modifica)
+// item.appliedOffer = oferta aplicada, o undefined
+//
+// Para tipos de cantidad (2x1, 3x2, nxm): descuenta las unidades gratis.
+// Para tipos de precio (mitad, descuento): aplica el porcentaje al total.
 // ─────────────────────────────────────────────────────────────────────────────
+export function effectiveSubtotal(item) {
+    const full = item.price * item.quantity;
+    if (!item.appliedOffer) return full;
+    const o = item.appliedOffer;
 
-const OFFER_TYPE_LABEL = {
-    '2x1':       (o) => '2 × 1',
-    '3x2':       (o) => '3 × 2',
-    'nxm':       (o) => `Compra ${o.buy_qty} llévate ${o.get_qty}`,
-    'mitad':     (o) => '½ Precio',
-    'descuento': (o) => `${o.discount_pct}% OFF`,
-};
+    switch (o.type) {
+        case '2x1': {
+            const freeQty = Math.floor(item.quantity / 2);
+            return parseFloat((full - freeQty * item.price).toFixed(2));
+        }
+        case '3x2': {
+            const freeQty = Math.floor(item.quantity / 3);
+            return parseFloat((full - freeQty * item.price).toFixed(2));
+        }
+        case 'nxm': {
+            const cycle = (o.buy_qty || 1) + (o.get_qty || 1);
+            const freeQty = Math.floor(item.quantity / cycle) * (o.get_qty || 1);
+            return parseFloat((full - freeQty * item.price).toFixed(2));
+        }
+        case 'mitad':
+            return parseFloat((full * 0.5).toFixed(2));
+        case 'descuento': {
+            const pct = o.discount_pct || 0;
+            return parseFloat((full * (1 - pct / 100)).toFixed(2));
+        }
+        default:
+            return full;
+    }
+}
 
-function getOfferTypeLabel(offer) {
-    return OFFER_TYPE_LABEL[offer.type]?.(offer) ?? offer.type;
+// Descuento total en dinero para una línea
+function lineDiscount(item) {
+    return parseFloat((item.price * item.quantity - effectiveSubtotal(item)).toFixed(2));
+}
+
+// Etiqueta legible del tipo de oferta
+function offerTypeLabel(offer) {
+    switch (offer.type) {
+        case '2x1': return '2 × 1';
+        case '3x2': return '3 × 2';
+        case 'nxm': return `Compra ${offer.buy_qty} llévate ${offer.get_qty}`;
+        case 'mitad': return '½ Precio';
+        case 'descuento': return `${offer.discount_pct}% OFF`;
+        default: return offer.type;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OfferBanner — banner inline que aparece cuando se detecta una oferta
+// OfferBanner
 // ─────────────────────────────────────────────────────────────────────────────
 function OfferBanner({ pendingOffer, onApply, onDismiss }) {
     const { offer, productName } = pendingOffer;
-    const typeLabel = getOfferTypeLabel(offer);
-
-    // Para tipos de precio, advertimos que el total visual puede diferir
-    // hasta que el backend soporte descuentos por oferta.
-    const isPriceBased = offer.type === 'mitad' || offer.type === 'descuento';
+    const typeLabel = offerTypeLabel(offer);
 
     return (
-        <div className="
-            mx-md mt-sm mb-0 rounded-xl overflow-hidden
-            border border-secondary/30 bg-gradient-to-r from-secondary/10 to-secondary/5
-            shadow-sm animate-fade-in
-        ">
-            {/* Franja superior de color */}
-            <div className="h-1 bg-gradient-to-r from-secondary to-secondary/50" />
-
+        <div className="mx-md mt-sm mb-0 rounded-xl overflow-hidden border border-secondary/30 bg-gradient-to-r from-secondary/10 to-secondary/5 shadow-sm">
+            <div className="h-1 bg-gradient-to-r from-secondary to-secondary/40" />
             <div className="px-md py-sm">
-                {/* Encabezado */}
                 <div className="flex items-start justify-between gap-sm">
                     <div className="flex items-center gap-xs">
-                        <span
-                            className="material-symbols-outlined text-[18px] text-secondary shrink-0"
-                            style={{ fontVariationSettings: "'FILL' 1" }}
-                        >
-                            local_offer
-                        </span>
-                        <p className="font-bold text-[13px] text-secondary leading-tight">
-                            ¡Oferta disponible!
-                        </p>
+                        <span className="material-symbols-outlined text-[18px] text-secondary shrink-0"
+                            style={{ fontVariationSettings: "'FILL' 1" }}>local_offer</span>
+                        <p className="font-bold text-[13px] text-secondary">¡Oferta disponible!</p>
                     </div>
-                    <button
-                        onClick={onDismiss}
-                        className="w-6 h-6 flex items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-high transition-colors shrink-0 -mt-0.5"
-                        title="Ignorar oferta"
-                    >
+                    <button onClick={onDismiss}
+                        className="w-6 h-6 flex items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-high transition-colors shrink-0 -mt-0.5">
                         <span className="material-symbols-outlined text-[15px]">close</span>
                     </button>
                 </div>
 
-                {/* Detalle */}
                 <div className="mt-xs space-y-0.5">
                     <p className="text-[12px] text-on-surface font-medium leading-snug">
                         <span className="font-bold">{offer.name}</span>
@@ -72,40 +91,17 @@ function OfferBanner({ pendingOffer, onApply, onDismiss }) {
                     <p className="text-[11px] text-on-surface-variant">
                         Aplica a: <span className="font-medium text-on-surface">{productName}</span>
                     </p>
-                    {isPriceBased && (
-                        <p className="text-[10px] text-secondary/70 flex items-center gap-0.5 mt-xs">
-                            <span className="material-symbols-outlined text-[12px]">info</span>
-                            El precio con descuento se muestra en el ticket.
-                        </p>
-                    )}
                 </div>
 
-                {/* Acciones */}
                 <div className="flex gap-xs mt-sm">
-                    <button
-                        onClick={onApply}
-                        className="
-                            flex-1 flex items-center justify-center gap-xs
-                            py-xs px-sm bg-secondary text-on-secondary
-                            text-[12px] font-bold rounded-lg
-                            hover:bg-secondary/90 active:scale-[0.97]
-                            transition-all
-                        "
-                    >
-                        <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                            check_circle
-                        </span>
+                    <button onClick={onApply}
+                        className="flex-1 flex items-center justify-center gap-xs py-xs px-sm bg-secondary text-on-secondary text-[12px] font-bold rounded-lg hover:bg-secondary/90 active:scale-[0.97] transition-all">
+                        <span className="material-symbols-outlined text-[14px]"
+                            style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
                         Aplicar oferta
                     </button>
-                    <button
-                        onClick={onDismiss}
-                        className="
-                            px-sm py-xs border border-outline-variant
-                            text-[12px] font-medium text-on-surface-variant rounded-lg
-                            hover:bg-surface-container-high active:scale-[0.97]
-                            transition-all
-                        "
-                    >
+                    <button onClick={onDismiss}
+                        className="px-sm py-xs border border-outline-variant text-[12px] font-medium text-on-surface-variant rounded-lg hover:bg-surface-container-high active:scale-[0.97] transition-all">
                         No, gracias
                     </button>
                 </div>
@@ -115,32 +111,26 @@ function OfferBanner({ pendingOffer, onApply, onDismiss }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CartItem — fila del carrito con badge de oferta aplicada
+// CartItem
 // ─────────────────────────────────────────────────────────────────────────────
 function CartItem({ item, onUpdateQuantity }) {
     const allowFractions = item.allow_fractions ?? false;
-    const unit           = item.unit || 'pza.';
-    const step           = allowFractions ? 0.1 : 1;
+    const unit = item.unit || 'pza.';
+    const step = allowFractions ? 0.1 : 1;
 
     const [inputVal, setInputVal] = useState(String(item.quantity));
 
     useEffect(() => {
-        setInputVal(
-            allowFractions
-                ? String(item.quantity)
-                : String(Math.floor(item.quantity))
-        );
+        setInputVal(allowFractions ? String(item.quantity) : String(Math.floor(item.quantity)));
     }, [item.quantity, allowFractions]);
 
     const clampMin = (v) => Math.max(allowFractions ? 0.01 : 1, v);
-    const round    = (v) => allowFractions
-        ? Math.round(v * 1000) / 1000
-        : Math.floor(v);
+    const round = (v) => allowFractions ? Math.round(v * 1000) / 1000 : Math.floor(v);
 
     const commitInput = () => {
         const parsed = parseFloat(inputVal);
         if (isNaN(parsed) || parsed <= 0) { setInputVal(String(item.quantity)); return; }
-        const next  = clampMin(round(parsed));
+        const next = clampMin(round(parsed));
         const delta = next - item.quantity;
         if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
         setInputVal(String(next));
@@ -148,13 +138,13 @@ function CartItem({ item, onUpdateQuantity }) {
 
     const handleKeyDown = (e) => {
         if (e.key === 'Enter') e.target.blur();
-        const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','Tab','.','-'];
+        const allowed = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', '.', '-'];
         if (!allowed.includes(e.key) && !/^\d$/.test(e.key)) e.preventDefault();
         if (!allowFractions && e.key === '.') e.preventDefault();
     };
 
     const handleMinus = () => {
-        const next  = clampMin(round(item.quantity - step));
+        const next = clampMin(round(item.quantity - step));
         const delta = next - item.quantity;
         if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
     };
@@ -164,21 +154,20 @@ function CartItem({ item, onUpdateQuantity }) {
         onUpdateQuantity(item.id, next - item.quantity);
     };
 
-    const subtotal     = item.price * item.quantity;
-    const hasOffer     = !!item.appliedOffer;
-    const isPriceBased = hasOffer && (item.appliedOffer.type === 'mitad' || item.appliedOffer.type === 'descuento');
-    const typeLabel    = hasOffer ? getOfferTypeLabel(item.appliedOffer) : null;
+    // ── Valores de display ────────────────────────────────────────────────────
+    const effSubtotal = effectiveSubtotal(item);
+    const fullSubtotal = item.price * item.quantity;
+    const disc = lineDiscount(item);
+    const hasOffer = !!item.appliedOffer && disc > 0;
+    const typeLabel = hasOffer ? offerTypeLabel(item.appliedOffer) : null;
 
     return (
         <div className="flex gap-3 group animate-fade-in">
             {/* Imagen */}
             <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
                 {item.images?.[0]?.url || item.image_url ? (
-                    <img
-                        className="w-full h-full object-cover"
-                        src={item.images?.[0]?.url || item.image_url}
-                        alt={item.name}
-                    />
+                    <img className="w-full h-full object-cover"
+                        src={item.images?.[0]?.url || item.image_url} alt={item.name} />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-300">
                         <span className="material-symbols-outlined">image</span>
@@ -188,60 +177,50 @@ function CartItem({ item, onUpdateQuantity }) {
 
             {/* Contenido */}
             <div className="flex-1 flex flex-col justify-between min-w-0">
-                {/* Nombre + importe */}
+
+                {/* Nombre + subtotal efectivo */}
                 <div className="flex justify-between gap-2 items-start">
                     <span className="font-bold text-[13px] text-on-surface truncate leading-tight">
                         {item.name}
                     </span>
                     <div className="text-right shrink-0">
-                        <span className="font-bold text-[14px]">${subtotal.toFixed(2)}</span>
-                        {/* Precio original tachado si hay descuento de precio */}
-                        {isPriceBased && item.originalPrice && (
+                        <span className="font-bold text-[14px]">${effSubtotal.toFixed(2)}</span>
+                        {/* Tachado del precio completo si hay descuento */}
+                        {hasOffer && (
                             <p className="text-[10px] text-on-surface-variant line-through">
-                                ${(item.originalPrice * item.quantity).toFixed(2)}
+                                ${fullSubtotal.toFixed(2)}
                             </p>
                         )}
                     </div>
                 </div>
 
                 {/* Precio unitario */}
-                <div className="flex items-center gap-xs">
-                    <span className="text-[10px] text-on-surface-variant">
-                        ${Number(item.price).toFixed(2)} / {unit}
-                    </span>
-                    {isPriceBased && item.originalPrice && (
-                        <span className="text-[10px] text-on-surface-variant line-through">
-                            ${Number(item.originalPrice).toFixed(2)}
-                        </span>
-                    )}
-                </div>
+                <span className="text-[10px] text-on-surface-variant">
+                    ${Number(item.price).toFixed(2)} / {unit}
+                </span>
 
-                {/* Badge de oferta aplicada */}
+                {/* Badge de oferta aplicada con ahorro */}
                 {hasOffer && (
                     <div className="flex items-center gap-xs mt-0.5">
                         <span className="flex items-center gap-0.5 text-[10px] font-bold text-secondary bg-secondary/10 px-1.5 py-0.5 rounded-full">
-                            <span
-                                className="material-symbols-outlined text-[11px]"
-                                style={{ fontVariationSettings: "'FILL' 1" }}
-                            >
-                                local_offer
-                            </span>
-                            {typeLabel} aplicado
+                            <span className="material-symbols-outlined text-[11px]"
+                                style={{ fontVariationSettings: "'FILL' 1" }}>local_offer</span>
+                            {typeLabel}
+                        </span>
+                        <span className="text-[10px] text-green-700 font-bold bg-green-50 px-1.5 py-0.5 rounded-full">
+                            Ahorro: ${disc.toFixed(2)}
                         </span>
                     </div>
                 )}
 
                 {/* Controles de cantidad */}
                 <div className="flex items-center justify-between mt-1">
-                    <div className={`flex items-center rounded-lg border overflow-hidden ${
-                        hasOffer
-                            ? 'border-secondary/40 bg-secondary/5'
-                            : 'border-outline-variant bg-surface-container-low'
-                    }`}>
-                        <button
-                            onClick={handleMinus}
-                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0"
-                        >
+                    <div className={`flex items-center rounded-lg border overflow-hidden ${hasOffer
+                        ? 'border-secondary/40 bg-secondary/5'
+                        : 'border-outline-variant bg-surface-container-low'
+                        }`}>
+                        <button onClick={handleMinus}
+                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0">
                             <span className="material-symbols-outlined text-sm">remove</span>
                         </button>
                         <input
@@ -254,15 +233,12 @@ function CartItem({ item, onUpdateQuantity }) {
                             onFocus={e => e.target.select()}
                             className="w-14 h-8 text-center font-bold text-[13px] bg-transparent focus:outline-none focus:bg-secondary/5 transition-colors"
                         />
-                        <button
-                            onClick={handlePlus}
-                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0"
-                        >
+                        <button onClick={handlePlus}
+                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0">
                             <span className="material-symbols-outlined text-sm">add</span>
                         </button>
                     </div>
 
-                    {/* Badge fraccionable + SKU */}
                     <div className="flex flex-col items-end gap-0.5">
                         {allowFractions && (
                             <span className="text-[9px] font-bold text-secondary/70 flex items-center gap-0.5">
@@ -270,9 +246,7 @@ function CartItem({ item, onUpdateQuantity }) {
                                 fracción
                             </span>
                         )}
-                        <span className="text-on-surface-variant font-mono text-[10px]">
-                            {item.sku || '—'}
-                        </span>
+                        <span className="text-on-surface-variant font-mono text-[10px]">{item.sku || '—'}</span>
                     </div>
                 </div>
             </div>
@@ -283,6 +257,7 @@ function CartItem({ item, onUpdateQuantity }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // TicketSidebar
 // ─────────────────────────────────────────────────────────────────────────────
+// DESPUÉS
 export default function TicketSidebar({
     cart,
     products,
@@ -291,28 +266,24 @@ export default function TicketSidebar({
     onSaleSuccess,
     onAddProduct,
     cajaId,
+    cajaNombre = '',    // ← agregar
     serie,
-    // ── Props de oferta ──────────────────────────────────────────────────────
     pendingOffer,
     onApplyOffer,
     onDismissOffer,
 }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [nextFolio,   setNextFolio]   = useState(null);
+    const [nextFolio, setNextFolio] = useState(null);
 
-    // ── Búsqueda interna ──────────────────────────────────────────────────────
-    const [query,       setQuery]       = useState('');
-    const [results,     setResults]     = useState([]);
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState([]);
     const [showResults, setShowResults] = useState(false);
     const searchRef = useRef(null);
-    const inputRef  = useRef(null);
-    const lastScan  = useRef('');
+    const inputRef = useRef(null);
+    const lastScan = useRef('');
 
-    useEffect(() => {
-        if (serie) setNextFolio(serie.next_folio);
-    }, [serie]);
+    useEffect(() => { if (serie) setNextFolio(serie.next_folio); }, [serie]);
 
-    // Cerrar resultados al click fuera
     useEffect(() => {
         const handler = (e) => {
             if (searchRef.current && !searchRef.current.contains(e.target))
@@ -322,33 +293,27 @@ export default function TicketSidebar({
         return () => document.removeEventListener('mousedown', handler);
     }, []);
 
-    // Búsqueda reactiva
     useEffect(() => {
         const q = query.trim().toLowerCase();
         if (!q) { setResults([]); setShowResults(false); return; }
-
         const matches = (products || []).filter(p => {
             const byName = p.name?.toLowerCase().includes(q);
-            const bySku  = p.sku?.toLowerCase().includes(q);
+            const bySku = p.sku?.toLowerCase().includes(q);
             const byKeys = (p.additional_keys || []).some(k => k?.toLowerCase().includes(q));
             return byName || bySku || byKeys;
         }).slice(0, 8);
-
         setResults(matches);
         setShowResults(true);
     }, [query, products]);
 
-    // Manejar Enter / escaneo
     const handleKeyDown = (e) => {
         if (e.key !== 'Enter') return;
         const q = query.trim().toLowerCase();
         if (!q) return;
-
         const exact = (products || []).find(p =>
             p.sku?.toLowerCase() === q ||
             (p.additional_keys || []).some(k => k?.toLowerCase() === q)
         );
-
         if (exact) {
             if (lastScan.current === exact.id + q) return;
             lastScan.current = exact.id + q;
@@ -356,7 +321,6 @@ export default function TicketSidebar({
             addProduct(exact);
             return;
         }
-
         if (results.length === 1) addProduct(results[0]);
     };
 
@@ -372,8 +336,10 @@ export default function TicketSidebar({
         ? `${serie.prefix}${String(nextFolio).padStart(4, '0')}`
         : '...';
 
-    const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const total    = subtotal;
+    // ── Totales usando effectiveSubtotal para reflejar descuentos ─────────────
+    const subtotalConDescuentos = cart.reduce((sum, item) => sum + effectiveSubtotal(item), 0);
+    const descuentoTotal = cart.reduce((sum, item) => sum + lineDiscount(item), 0);
+    const total = subtotalConDescuentos;
 
     const handleFinishSale = () => {
         setIsModalOpen(false);
@@ -385,17 +351,14 @@ export default function TicketSidebar({
     return (
         <section className="flex-[1.5] flex flex-col bg-white shadow-[-4px_0_12px_rgba(0,0,0,0.05)] z-20">
 
-            {/* ── Header: folio + borrar ── */}
+            {/* ── Header ── */}
             <div className="px-md pt-md pb-2 border-b border-outline-variant bg-slate-50">
                 <div className="flex justify-between items-center mb-2">
                     <h2 className="font-headline-md text-headline-md text-on-surface">
                         Ticket #{folioLabel}
                     </h2>
-                    <button
-                        onClick={onClearCart}
-                        disabled={cart.length === 0}
-                        className="p-xs text-error hover:bg-error-container rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
+                    <button onClick={onClearCart} disabled={cart.length === 0}
+                        className="p-xs text-error hover:bg-error-container rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                         <span className="material-symbols-outlined">delete_sweep</span>
                     </button>
                 </div>
@@ -403,9 +366,7 @@ export default function TicketSidebar({
                 {/* Barra de búsqueda / escaneo */}
                 <div className="relative" ref={searchRef}>
                     <div className="flex items-center gap-2 px-3 py-2 bg-white border border-outline-variant rounded-xl focus-within:ring-2 focus-within:ring-secondary focus-within:border-secondary transition-all">
-                        <span className="material-symbols-outlined text-[18px] text-outline shrink-0">
-                            qr_code_scanner
-                        </span>
+                        <span className="material-symbols-outlined text-[18px] text-outline shrink-0">qr_code_scanner</span>
                         <input
                             ref={inputRef}
                             type="text"
@@ -417,32 +378,23 @@ export default function TicketSidebar({
                             className="flex-1 text-[13px] bg-transparent focus:outline-none text-on-surface placeholder:text-outline-variant"
                         />
                         {query && (
-                            <button
-                                onClick={() => { setQuery(''); setResults([]); setShowResults(false); inputRef.current?.focus(); }}
-                                className="shrink-0"
-                            >
+                            <button onClick={() => { setQuery(''); setResults([]); setShowResults(false); inputRef.current?.focus(); }}>
                                 <span className="material-symbols-outlined text-[16px] text-outline hover:text-on-surface transition-colors">close</span>
                             </button>
                         )}
                     </div>
 
-                    {/* Resultados dropdown */}
                     {showResults && results.length > 0 && (
                         <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-outline-variant/50 rounded-xl shadow-xl z-50 overflow-hidden max-h-64 overflow-y-auto">
                             {results.map(p => {
-                                const img  = p.images?.[0]?.url || p.image_url;
+                                const img = p.images?.[0]?.url || p.image_url;
                                 const unit = p.unit || 'pza.';
                                 return (
-                                    <button
-                                        key={p.id}
-                                        onClick={() => addProduct(p)}
-                                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-surface-container-low transition-colors text-left border-b border-outline-variant/20 last:border-none"
-                                    >
+                                    <button key={p.id} onClick={() => addProduct(p)}
+                                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-surface-container-low transition-colors text-left border-b border-outline-variant/20 last:border-none">
                                         <div className="w-9 h-9 rounded-lg bg-surface-container-low border border-outline-variant/30 overflow-hidden shrink-0 flex items-center justify-center">
-                                            {img
-                                                ? <img src={img} alt={p.name} className="w-full h-full object-cover" />
-                                                : <span className="material-symbols-outlined text-[16px] text-outline">image</span>
-                                            }
+                                            {img ? <img src={img} alt={p.name} className="w-full h-full object-cover" />
+                                                : <span className="material-symbols-outlined text-[16px] text-outline">image</span>}
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-[13px] font-medium text-on-surface truncate">{p.name}</p>
@@ -453,8 +405,7 @@ export default function TicketSidebar({
                                             <p className="text-[10px] text-outline">{p.stock} {unit}</p>
                                             {p.allow_fractions && (
                                                 <span className="text-[9px] font-bold text-secondary/60 flex items-center justify-end gap-0.5">
-                                                    <span className="material-symbols-outlined text-[10px]">scatter_plot</span>
-                                                    fracción
+                                                    <span className="material-symbols-outlined text-[10px]">scatter_plot</span>fracción
                                                 </span>
                                             )}
                                         </div>
@@ -464,7 +415,6 @@ export default function TicketSidebar({
                         </div>
                     )}
 
-                    {/* Sin resultados */}
                     {showResults && query.trim() && results.length === 0 && (
                         <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-outline-variant/50 rounded-xl shadow-xl z-50 px-4 py-3 text-[13px] text-on-surface-variant flex items-center gap-2">
                             <span className="material-symbols-outlined text-[16px]">search_off</span>
@@ -483,7 +433,7 @@ export default function TicketSidebar({
                 />
             )}
 
-            {/* ── Items del carrito ── */}
+            {/* ── Items ── */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-md space-y-md">
                 {cart.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-outline-variant">
@@ -492,22 +442,40 @@ export default function TicketSidebar({
                     </div>
                 ) : (
                     cart.map(item => (
-                        <CartItem
-                            key={item.id}
-                            item={item}
-                            onUpdateQuantity={onUpdateQuantity}
-                        />
+                        <CartItem key={item.id} item={item} onUpdateQuantity={onUpdateQuantity} />
                     ))
                 )}
             </div>
 
-            {/* ── Totales y cobrar ── */}
+            {/* ── Totales ── */}
             <div className="p-lg bg-surface-container-lowest border-t border-outline-variant space-y-md">
                 <div className="space-y-sm">
-                    <div className="flex justify-between text-on-surface-variant font-body-sm text-body-sm">
-                        <span>Subtotal</span>
-                        <span>${subtotal.toFixed(2)}</span>
-                    </div>
+                    {/* Desglose solo si hay descuentos */}
+                    {descuentoTotal > 0 && (
+                        <>
+                            <div className="flex justify-between text-on-surface-variant font-body-sm text-body-sm">
+                                <span>Subtotal</span>
+                                <span>${(total + descuentoTotal).toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-green-700 font-body-sm text-body-sm">
+                                <span className="flex items-center gap-xs">
+                                    <span className="material-symbols-outlined text-[14px]"
+                                        style={{ fontVariationSettings: "'FILL' 1" }}>local_offer</span>
+                                    Descuentos
+                                </span>
+                                <span className="font-bold">-${descuentoTotal.toFixed(2)}</span>
+                            </div>
+                        </>
+                    )}
+
+                    {/* Si no hay descuentos muestra el subtotal normal */}
+                    {descuentoTotal === 0 && (
+                        <div className="flex justify-between text-on-surface-variant font-body-sm text-body-sm">
+                            <span>Subtotal</span>
+                            <span>${total.toFixed(2)}</span>
+                        </div>
+                    )}
+
                     <div className="pt-sm border-t border-slate-100 flex justify-between items-end">
                         <span className="font-headline-md text-headline-md">Total</span>
                         <span className="font-display-price text-display-price text-secondary">
@@ -533,6 +501,7 @@ export default function TicketSidebar({
                 </div>
             </div>
 
+            
             <CheckoutModal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
@@ -540,6 +509,7 @@ export default function TicketSidebar({
                 total={total}
                 onFinishSale={handleFinishSale}
                 cajaId={cajaId}
+                cajaNombre={cajaNombre}    // ← agregar
             />
         </section>
     );

@@ -104,7 +104,7 @@ export default function SignUpPage() {
                                     </span>
                                     <span className="flex items-center gap-[4px]">
                                         <span className="material-symbols-outlined text-[14px]">schedule</span>
-                                        30 días de prueba
+                                        7 días de prueba
                                     </span>
                                 </div>
                             </div>
