@@ -1,8 +1,30 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    printerService.js  —  Servicio de impresión BLE / Windows
+   ───────────────────────────────────────────────────────────────────────────
+   FASE 2 — Soporte Capacitor (Android nativo)
+
+   Este archivo ahora detecta en qué entorno corre (web / capacitor / electron
+   más adelante) usando runtimeEnv.js, y dirige las operaciones de Bluetooth
+   al transporte correcto:
+     - web       → navigator.bluetooth (Web Bluetooth API) — código original,
+                   sin cambios de comportamiento.
+     - capacitor → capacitorBtAdapter.js, que habla con el plugin nativo
+                   @capacitor-community/bluetooth-le.
+
+   Todas las funciones públicas (printSaleTicket, reprintSaleTicket,
+   reconnectBTPrinters, cacheBtDevice, startBTWatcher, etc.) mantienen
+   exactamente la misma firma que antes. CheckoutModal.jsx, SaleDetail.jsx,
+   TicketSidebar.jsx y AuthContext.jsx NO necesitan ningún cambio.
+
+   Lo que SÍ cambia de firma (documentado en su sección): las funciones que
+   antes recibían un objeto `btDevice` "vivo" de Web Bluetooth ahora, en
+   Capacitor, trabajan con un `deviceId` (string) — ver sección "Capacitor"
+   más abajo y los comentarios en cada función pública nueva.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { buildSaleTicket } from './ticketBuilder';
+import { isCapacitor } from './runtimeEnv';
+import * as capBt from './capacitorBtAdapter';
 
 /* ── Perfiles BLE de impresoras térmicas conocidas ───────────────────────── */
 export const PRINTER_PROFILES = [
@@ -15,7 +37,7 @@ export const PRINTER_PROFILES = [
 
 export const PRINTER_SERVICE_UUIDS = PRINTER_PROFILES.map(p => p.service);
 
-/* ── Caché de dispositivos y perfiles ────────────────────────────────────── */
+/* ── Caché de dispositivos y perfiles (rama WEB) ─────────────────────────── */
 const _deviceCache = new Map();
 const _profileCache = new Map();
 
@@ -58,6 +80,13 @@ function buildOfferLabel(offerType, item = {}) {
     default: return offerType || 'PROMO';
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ── RAMA WEB ── (Web Bluetooth API)
+   Todo el bloque siguiente es exactamente el código original. No se modificó
+   ninguna línea de lógica — solo se mantiene tal cual para cuando
+   isCapacitor() === false.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 async function findWritableCharacteristic(server, address) {
   const cached = _profileCache.get(address);
@@ -218,7 +247,7 @@ async function writeChunked(chr, data, btRef, address) {
   console.info('[Printer] Envío completo');
 }
 
-async function sendBytes(btRef, data, address) {
+async function sendBytesWeb(btRef, data, address) {
   const server = await ensureConnection(btRef, address);
   try {
     const chr = await findWritableCharacteristic(server, address);
@@ -231,7 +260,13 @@ async function sendBytes(btRef, data, address) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   sendToPrinterDirect  —  Envío directo para la prueba del modal
+   sendToPrinterDirect  —  Envío directo para la prueba del modal (rama WEB)
+
+   NOTA DE COMPATIBILIDAD: esta función sigue existiendo tal cual para que
+   PrinterSetupModal.jsx no rompa en web. En Capacitor, el modal usa
+   sendTestTicket() (ver más abajo) que internamente decide la rama correcta
+   — por eso el modal necesita un pequeño ajuste para llamar la función
+   nueva en vez de esta directamente. Ver guía de integración del modal.
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function sendToPrinterDirect(btDevice, data) {
   let server;
@@ -253,7 +288,31 @@ export async function sendToPrinterDirect(btDevice, data) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ── RAMA CAPACITOR ──
+   Envío de bytes usando el adapter nativo. Aquí "address" siempre es el
+   deviceId que entrega bluetooth-le (string), guardado igual que el `id`
+   de Web Bluetooth en localStorage — por eso el resto del archivo
+   (getActivePrinter, _sendTicket, etc.) no necesita distinguir el origen,
+   solo pasa el string "address" tal cual.
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function sendBytesCapacitor(address, data) {
+  await capBt.writeBytes(address, data);
+}
+
+/* ── Despachador único: decide web vs capacitor por entorno ─────────────── */
+async function sendBytes(btRef, data, address) {
+  if (isCapacitor()) {
+    // En Capacitor no usamos btRef (objeto vivo) — address ES el deviceId.
+    await sendBytesCapacitor(address, data);
+  } else {
+    await sendBytesWeb(btRef, data, address);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    getActivePrinter  —  Busca la impresora con autoPrint habilitado
+   Misma lógica que antes; la rama Capacitor simplemente no necesita
+   resolver un objeto "btRef" vivo — basta con el address (deviceId) guardado.
    ═══════════════════════════════════════════════════════════════════════════ */
 async function getActivePrinter() {
   let devices = [];
@@ -262,6 +321,13 @@ async function getActivePrinter() {
   const printer = devices.find(d => d.config?.autoPrint === true);
   if (!printer) return null;
   if (printer.connectionType === 'windows') return { device: printer, btRef: null };
+
+  if (isCapacitor()) {
+    // En Capacitor no necesitamos "recuperar" un objeto vivo — el deviceId
+    // guardado en printer.address es suficiente; connect() se hace al
+    // momento de escribir (sendBytesCapacitor → capBt.writeBytes).
+    return { device: printer, btRef: null };
+  }
 
   let btRef = _deviceCache.get(printer.address) ?? null;
 
@@ -289,6 +355,22 @@ async function _sendTicket(saleData, device, btRef) {
   const bytes = buildSaleTicket(saleData, width);
 
   if (device.connectionType === 'bluetooth') {
+    if (isCapacitor()) {
+      // En Capacitor, device.address es el deviceId — no requiere btRef.
+      if (!device.address) {
+        return {
+          ok: false,
+          error: 'Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.',
+        };
+      }
+      try {
+        await sendBytes(null, bytes, device.address);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }
+
     if (!btRef) {
       return {
         ok: false,
@@ -308,10 +390,7 @@ async function _sendTicket(saleData, device, btRef) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    printSaleTicket  —  Imprime al terminar una NUEVA venta (desde CheckoutModal)
-
-   FIX: Ya no reconstruye saleData desde cero. CheckoutModal ya arma el objeto
-   completo (con items enriquecidos, offer_label, descuentos, cajero, caja).
-   Solo lo pasamos directamente a _sendTicket.
+   Sin cambios de firma ni de comportamiento visible.
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function printSaleTicket(saleData) {
   try {
@@ -327,13 +406,7 @@ export async function printSaleTicket(saleData) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    reprintSaleTicket  —  Reimprime desde el Historial de ventas
-   Acepta el objeto sale + items tal como los devuelve salesService.get(id).
-
-   FIXES:
-   - product_name: la API devuelve p.name AS product_name, no i.name
-   - timezone: normaliza timestamp de PostgreSQL a UTC antes de parsear
-   - offer_label: reconstruye desde offer_type (join en backend)
-   - cashier: usa cashier_name (requiere JOIN en GET /api/sales/:id)
+   Sin cambios de firma ni de comportamiento visible.
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function reprintSaleTicket(sale, items = []) {
   try {
@@ -346,29 +419,24 @@ export async function reprintSaleTicket(sale, items = []) {
 
     const saleData = {
       folio: sale.folio ?? '',
-      // FIX timezone: normalizar antes de pasar a ticketBuilder
       created_at: normalizeTimestamp(sale.created_at),
       payment_method: sale.payment_method ?? 'cash',
-      // Si se guarda amount_paid en la BD, usarlo; si no, asumir total
       amount_paid: Number(sale.amount_paid ?? total),
       change: Number(sale.change_amount ?? sale.change ?? 0),
       total,
       subtotal: total,
       discount: 0,
       customer_name: sale.customer_name ?? '',
-      // FIX cashier: requiere que GET /api/sales/:id haga JOIN con users
       cashier: sale.cashier_name ?? '',
       caja: sale.caja_name ?? '',
       items: items.map(i => {
         const discount = Number(i.discount_amount ?? 0);
         return {
           sku: i.sku ?? '',
-          // FIX product name: la API devuelve product_name, no name
           name: i.product_name ?? i.name ?? '',
           quantity: Number(i.quantity ?? 1),
           price: Number(i.unit_price ?? 0),
           discount_amount: discount,
-          // FIX offer_label: reconstruir desde offer_type del JOIN en BD
           offer_label: i.offer_type
             ? buildOfferLabel(i.offer_type, i)
             : null,
@@ -383,9 +451,16 @@ export async function reprintSaleTicket(sale, items = []) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   cacheBtDevice  —  Guarda referencia viva del dispositivo BT
+   cacheBtDevice  —  Guarda referencia viva del dispositivo BT (rama WEB)
+
+   En Capacitor esta función es un no-op seguro: no hay "objeto vivo" que
+   cachear (todo se identifica por deviceId, que ya vive en localStorage
+   dentro de printer.address). Se mantiene exportada con la misma firma
+   para que PrinterSetupModal.jsx y DevicesPanel.jsx no necesiten ramas
+   condicionales — simplemente no hace nada dañino si se llama en Capacitor.
    ═══════════════════════════════════════════════════════════════════════════ */
 export function cacheBtDevice(address, btDevice) {
+  if (isCapacitor()) return; // no-op: nada que cachear en este entorno
   if (address && btDevice) _deviceCache.set(address, btDevice);
 }
 
@@ -396,15 +471,18 @@ function sleep(ms) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    reconnectBTPrinters
-   Busca impresoras BT guardadas en localStorage y pre-conecta las que
-   el navegador ya tiene autorizadas. Se llama tras login o recarga.
+   ───────────────────────────────────────────────────────────────────────────
+   WEB: busca impresoras BT guardadas y pre-conecta las que el navegador ya
+        tiene autorizadas (código original, sin cambios).
+   CAPACITOR: el "emparejamiento" vive a nivel sistema operativo Android, no
+        a nivel permiso de origin — por eso aquí no hace falta el patrón de
+        getDevices() + buscar coincidencia. Simplemente intenta connect()
+        directo con el deviceId guardado. Si el dispositivo sigue
+        emparejado a nivel Android (lo normal, indefinidamente), conecta.
+        Si no, lo marca como "missing" igual que en web, para que el banner
+        opcional (getBTWatcherStatus) lo pueda mostrar.
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function reconnectBTPrinters() {
-  if (!navigator.bluetooth?.getDevices) {
-    console.info('[BT] getDevices no disponible en este navegador.');
-    return;
-  }
-
   let saved = [];
   try {
     saved = JSON.parse(localStorage.getItem('pos_devices') || '[]');
@@ -413,12 +491,38 @@ export async function reconnectBTPrinters() {
   const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
   if (btPrinters.length === 0) {
     console.info('[BT] No hay impresoras BT guardadas.');
+    _btWatcherStatus.missingDevices = [];
+    return;
+  }
+
+  if (isCapacitor()) {
+    const missing = [];
+    for (const printer of btPrinters) {
+      try {
+        await capBt.connect(printer.address);
+        console.info(`[BT] ✓ Auto-reconectado (Capacitor): ${printer.name}`);
+      } catch (e) {
+        console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`);
+        missing.push(printer);
+      }
+    }
+    _btWatcherStatus.missingDevices = missing;
+    _btWatcherStatus.lastCheckedAt = Date.now();
+    _notifyBTWatcherListeners();
+    return;
+  }
+
+  // ── Rama WEB (código original) ──────────────────────────────────────────
+  if (!navigator.bluetooth?.getDevices) {
+    console.info('[BT] getDevices no disponible en este navegador.');
     return;
   }
 
   try {
     const known = await navigator.bluetooth.getDevices();
     console.info(`[BT] Dispositivos conocidos por el navegador: ${known.length}`);
+
+    const missing = [];
 
     for (const printer of btPrinters) {
       const found = known.find(
@@ -427,6 +531,7 @@ export async function reconnectBTPrinters() {
 
       if (!found) {
         console.info(`[BT] "${printer.name}" no está en permisos del navegador — requiere vinculación manual.`);
+        missing.push(printer);
         continue;
       }
 
@@ -440,9 +545,134 @@ export async function reconnectBTPrinters() {
         console.info(`[BT] ✓ Auto-reconectado: ${printer.name}`);
       } catch (e) {
         console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`);
+        missing.push(printer);
       }
     }
+
+    _btWatcherStatus.missingDevices = missing;
+    _btWatcherStatus.lastCheckedAt = Date.now();
+    _notifyBTWatcherListeners();
   } catch (e) {
     console.info('[BT] Error en getDevices():', e.message);
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BT Watcher — sin cambios de comportamiento. Sigue escuchando
+   visibilitychange y llamando reconnectBTPrinters(), que ahora internamente
+   ya sabe distinguir web vs capacitor.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let _watcherStarted = false;
+let _reconnecting = false;
+
+const _btWatcherStatus = {
+  missingDevices: [],
+  lastCheckedAt: null,
+};
+
+const _btWatcherListeners = new Set();
+
+function _notifyBTWatcherListeners() {
+  for (const cb of _btWatcherListeners) {
+    try { cb({ ..._btWatcherStatus }); } catch { /* noop */ }
+  }
+}
+
+export function startBTWatcher() {
+  if (_watcherStarted) return;
+  if (typeof document === 'undefined') return;
+  _watcherStarted = true;
+
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    if (_reconnecting) return;
+
+    _reconnecting = true;
+    try {
+      await reconnectBTPrinters();
+    } finally {
+      _reconnecting = false;
+    }
+  });
+
+  console.info('[BT] Watcher de reconexión activado (visibilitychange).');
+}
+
+export function onBTWatcherStatusChange(callback) {
+  if (typeof callback !== 'function') return () => {};
+  _btWatcherListeners.add(callback);
+  return () => _btWatcherListeners.delete(callback);
+}
+
+export function getBTWatcherStatus() {
+  return { ..._btWatcherStatus };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ── NUEVAS FUNCIONES PÚBLICAS PARA EL MODAL DE VINCULACIÓN ──
+   ───────────────────────────────────────────────────────────────────────────
+   PrinterSetupModal.jsx hoy llama navigator.bluetooth.requestDevice()
+   directamente. Esa llamada no existe en Capacitor. Las funciones de abajo
+   son el reemplazo correcto: encapsulan "buscar/vincular impresora" y
+   "mandar ticket de prueba" para AMBOS entornos, así el modal solo necesita
+   llamar estas funciones en vez de tocar navigator.bluetooth.
+
+   Ver la guía de integración del modal más abajo en esta conversación para
+   los cambios exactos a aplicar en PrinterSetupModal.jsx.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Abre el selector de dispositivos BT (nativo en Capacitor, navegador en web)
+ * y devuelve un objeto normalizado { id, name } donde:
+ *   - en WEB: id es device.id (string), pero el modal también necesita
+ *     guardar el objeto device "vivo" aparte (ver btDeviceRef en el modal)
+ *     porque sendToPrinterDirect web lo requiere.
+ *   - en CAPACITOR: id es el deviceId de bluetooth-le (string), y NO hay
+ *     objeto "vivo" — con el id es suficiente para todo lo demás.
+ *
+ * @returns {Promise<{ id: string, name: string, raw: any }>}
+ *   raw: el objeto BluetoothDevice original en web (null en Capacitor) —
+ *   el modal lo necesita para cacheBtDevice() en la rama web.
+ */
+export async function scanForPrinter() {
+  if (isCapacitor()) {
+    const device = await capBt.requestDevice();
+    return { id: device.deviceId, name: device.name, raw: null };
+  }
+
+  // ── Rama WEB (mismo comportamiento que el modal ya tenía) ───────────────
+  if (!navigator.bluetooth) {
+    throw new Error(
+      'Web Bluetooth no está disponible. Usa Chrome en Android (v56+). ' +
+      'En iOS no está soportado.'
+    );
+  }
+  const device = await navigator.bluetooth.requestDevice({
+    acceptAllDevices: true,
+    optionalServices: PRINTER_SERVICE_UUIDS,
+  });
+  return { id: device.id ?? device.name ?? '', name: device.name ?? 'Impresora', raw: device };
+}
+
+/**
+ * Envía un ticket de prueba a la impresora ya vinculada, usando el entorno
+ * correcto. Reemplaza la llamada directa a sendToPrinterDirect() que el
+ * modal hacía antes para la rama Bluetooth (la rama Windows del modal,
+ * que abre una ventana de impresión del sistema, no cambia y sigue
+ * viviendo en el propio componente).
+ *
+ * @param {string} address   deviceId (Capacitor) o device.id (web)
+ * @param {any}    rawDevice objeto BluetoothDevice vivo (solo necesario en
+ *                           web; en Capacitor se ignora, puede pasarse null)
+ * @param {Uint8Array} bytes ticket ya construido (buildTestTicket(...))
+ */
+export async function sendTestTicket(address, rawDevice, bytes) {
+  if (isCapacitor()) {
+    await capBt.writeBytes(address, bytes);
+    return;
+  }
+  if (!rawDevice) {
+    throw new Error('No hay dispositivo Bluetooth vinculado.');
+  }
+  await sendToPrinterDirect(rawDevice, bytes);
 }

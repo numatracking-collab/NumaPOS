@@ -1,20 +1,73 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   AdCreatorModal.jsx — Generador de publicidad con IA + Canvas  (v2)
+   AdCreatorModal.jsx — Generador de publicidad con IA + Canvas
    ─────────────────────────────────────────────────────────────────────────
-   v2 — Mejoras visuales:
-   • Prompt con detección automática de tema (fútbol, navidad, verano…)
-   • headlineGradient — titular con gradiente de colores
-   • Badge decorativo grande con gradiente dorado + estrella encima
-   • Nuevas primitivas de fondo: bokeh, spotlight
-   • drawContextualDecor — balones, estrellas, sparkles en capas bg/front
-   • Producto 12 % más grande con sombra mejorada
-   ─────────────────────────────────────────────────────────────────────────
-   Props:
-     isOpen   — boolean
-     onClose  — () => void
-     offer    — oferta preseleccionada (puede ser null)
-     offers   — lista completa de ofertas del servicio
+   ⚠️ Módulo en desarrollo: el modal se abre y muestra el aviso de
+   "en construcción" en vez de ejecutar la generación con IA/Canvas.
+   La implementación completa (pasos, generación, composición, descarga)
+   queda comentada al final de este archivo para retomarla más adelante.
 ═══════════════════════════════════════════════════════════════════════════ */
+
+import OnDevelopment from '../OnDevelopment';
+
+export default function AdCreatorModal({ isOpen, onClose }) {
+    if (!isOpen) return null;
+
+    return (
+        <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+        >
+            <div
+                className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+                style={{ width: '100%', maxWidth: '480px', minWidth: '320px', maxHeight: '92vh' }}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                    <h2 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-purple-600 text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                            auto_awesome
+                        </span>
+                        Crear Publicidad con IA
+                    </h2>
+                    <button
+                        onClick={onClose}
+                        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors text-gray-500"
+                        aria-label="Cerrar"
+                    >
+                        <span className="material-symbols-outlined text-[20px]">close</span>
+                    </button>
+                </div>
+
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto" style={{ minHeight: 360 }}>
+                    <OnDevelopment
+                        title="¡La publicidad con IA ya casi está lista!"
+                        message="Estamos trabajando en el desarrollo de este módulo, lo podrás utilizar muy pronto."
+                    />
+                </div>
+
+                {/* Footer */}
+                <div className="px-6 py-4 border-t border-gray-200 shrink-0 flex justify-end">
+                    <button
+                        onClick={onClose}
+                        className="px-5 py-2 bg-purple-600 text-white rounded-xl text-[13px] font-bold hover:bg-purple-700 transition-all active:scale-95"
+                    >
+                        Entendido
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   IMPLEMENTACIÓN ORIGINAL — conservada para retomar cuando el módulo de
+   generación de publicidad con IA esté listo para producción.
+
+   Incluye: pasos (mensaje/formato/generación), llamadas a /api/ai/ad-generate
+   y /api/ai/ad-generate-specs, composición con Canvas (fondo, decoraciones
+   contextuales, eliminación de fondo del producto, texto con gradientes),
+   y descarga de las 3 variantes generadas.
 
 import { useState, useEffect, useCallback } from 'react';
 
@@ -106,13 +159,11 @@ function removeBackground(img) {
 
 // ─── Primitivas de dibujo ─────────────────────────────────────────────────────
 
-/** Generador pseudoaleatorio reproducible (Xorshift32) */
 function seededRnd(seed) {
     let s = (Math.abs(seed ^ 0x5f3759df) || 1) >>> 0;
     return () => { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return (s >>> 0) / 4294967296; };
 }
 
-/** Estrella de N puntas */
 function drawStar(ctx, cx, cy, outerR, innerR, points, color) {
     innerR = innerR ?? outerR * 0.42;
     points = points ?? 5;
@@ -128,7 +179,6 @@ function drawStar(ctx, cx, cy, outerR, innerR, points, color) {
     ctx.fill();
 }
 
-/** Destello de 4 puntas (sparkle) */
 function drawSparkle(ctx, cx, cy, size, color) {
     ctx.save();
     ctx.fillStyle = color || '#ffffff';
@@ -145,7 +195,6 @@ function drawSparkle(ctx, cx, cy, size, color) {
     ctx.restore();
 }
 
-/** Polígono regular (helper interno para el balón) */
 function _polygon(ctx, cx, cy, r, sides, startAngle) {
     ctx.beginPath();
     for (let i = 0; i < sides; i++) {
@@ -156,9 +205,7 @@ function _polygon(ctx, cx, cy, r, sides, startAngle) {
     ctx.closePath();
 }
 
-/** Balón de fútbol estilizado con parches */
 function drawSoccerBall(ctx, cx, cy, r) {
-    // Esfera con gradiente
     const gr = ctx.createRadialGradient(cx - r * .28, cy - r * .28, r * .04, cx, cy, r);
     gr.addColorStop(0, '#d2d2b4');
     gr.addColorStop(0.5, '#8a8a6e');
@@ -170,7 +217,6 @@ function drawSoccerBall(ctx, cx, cy, r) {
     ctx.strokeStyle = 'rgba(0,0,0,0.22)';
     ctx.lineWidth = r * 0.018;
     ctx.stroke();
-    // Parches (pentágonos)
     ctx.fillStyle = 'rgba(20,20,12,0.75)';
     _polygon(ctx, cx, cy, r * .3, 5, -Math.PI / 2); ctx.fill();
     for (let i = 0; i < 5; i++) {
@@ -184,8 +230,6 @@ function drawSoccerBall(ctx, cx, cy, r) {
 
 function drawBackground(ctx, W, H, bg) {
     const colors = bg.colors || ['#6750A4', '#9C84D4'];
-
-    // Gradiente base
     if (bg.type === 'radial') {
         const gr = ctx.createRadialGradient(W * .5, H * .4, 0, W * .5, H * .5, W * .85);
         colors.forEach((c, i) => gr.addColorStop(i / Math.max(colors.length - 1, 1), c));
@@ -193,19 +237,15 @@ function drawBackground(ctx, W, H, bg) {
     } else if (bg.type === 'solid') {
         ctx.fillStyle = colors[0];
     } else {
-        // gradient (default)
         const gr = ctx.createLinearGradient(W * (bg.x0 ?? 0), H * (bg.y0 ?? 0), W * (bg.x1 ?? 1), H * (bg.y1 ?? 1));
         colors.forEach((c, i) => gr.addColorStop(i / Math.max(colors.length - 1, 1), c));
         ctx.fillStyle = gr;
     }
     ctx.fillRect(0, 0, W, H);
 
-    // Shapes / efectos
     (bg.shapes || []).forEach(s => {
         ctx.save();
-
         if (s.type === 'bokeh') {
-            // Círculos difusos luminosos con posición reproducible
             const rand = seededRnd(s.seed ?? 42);
             const count = s.count || 10;
             const toHex = v => Math.round(Math.min(1, v) * 255).toString(16).padStart(2, '0');
@@ -224,7 +264,6 @@ function drawBackground(ctx, W, H, bg) {
                 ctx.fill();
             }
         } else if (s.type === 'spotlight') {
-            // Cono de luz radial desde un punto (simula foco de estadio)
             const toHex = v => Math.round(Math.min(1, v) * 255).toString(16).padStart(2, '0');
             const gr2 = ctx.createRadialGradient(
                 W * (s.cx || .5), H * (s.cy ?? -.1), 0,
@@ -299,13 +338,13 @@ function drawText(ctx, W, H, ts, format) {
         tagline,
         cta,
         headlineColor = '#ffffff',
-        headlineGradient = null,        // ← NUEVO: array de colores p/gradiente
+        headlineGradient = null,
         taglineColor = '#ffffffbb',
         ctaColor = '#ffffff',
         ctaBg = null,
         badgeText = null,
         badgeBg = '#FF3B30',
-        badgeStyle = 'simple',    // ← NUEVO: 'simple' | 'decorative'
+        badgeStyle = 'simple',
         accentLine = null,
     } = ts;
 
@@ -314,25 +353,19 @@ function drawText(ctx, W, H, ts, format) {
     const marginL = W * .08;
     const maxWidth = W * .84;
 
-    // Línea acento
     if (accentLine) {
         ctx.fillStyle = accentLine;
         ctx.fillRect(marginL, zoneTop - U * 1.4, U * 3.5, U * .16);
     }
 
-    // ── Badge DECORATIVO — grande con gradiente dorado + estrella ─────────
     if (badgeText && badgeStyle === 'decorative') {
         ctx.save();
         const bigSize = U * 3.8;
         const bx = marginL;
         const by = H * .042;
-
-        // Estrella encima del número
         ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = U * .6;
         ctx.fillStyle = badgeBg || '#C9A227';
         drawStar(ctx, bx + bigSize * .48, by - U * .5, U * 1.05);
-
-        // Número grande con gradiente dorado
         ctx.font = `900 ${bigSize}px "Arial Black", Arial, sans-serif`;
         ctx.textBaseline = 'top';
         ctx.shadowBlur = U * .9; ctx.shadowOffsetY = U * .2;
@@ -343,11 +376,8 @@ function drawText(ctx, W, H, ts, format) {
         bGr.addColorStop(1, '#7A5000');
         ctx.fillStyle = bGr;
         ctx.fillText(badgeText, bx, by);
-        // Borde sutil para profundidad
         ctx.lineWidth = U * .05; ctx.strokeStyle = 'rgba(0,0,0,0.22)';
         ctx.strokeText(badgeText, bx, by);
-
-        // Pastilla pequeña debajo del número grande
         ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
         const pFont = `bold ${U * .8}px Arial, sans-serif`;
         ctx.font = pFont; ctx.textBaseline = 'middle';
@@ -359,8 +389,6 @@ function drawText(ctx, W, H, ts, format) {
         ctx.fillStyle = '#ffffff';
         ctx.fillText(badgeText, px2 + U * .6, py2 + ph / 2);
         ctx.restore();
-
-        // ── Badge SIMPLE (original) ───────────────────────────────────────────
     } else if (badgeText) {
         ctx.save();
         const badgeFont = `bold ${U * .95}px "Arial Black", Arial, sans-serif`;
@@ -375,18 +403,15 @@ function drawText(ctx, W, H, ts, format) {
         ctx.restore();
     }
 
-    // ── Texto principal ───────────────────────────────────────────────────
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.62)';
     ctx.shadowBlur = U * .55;
     ctx.shadowOffsetY = U * .12;
 
-    // Headline — color sólido o gradiente
     const headFont = `900 ${U * 1.85}px "Arial Black", Arial, sans-serif`;
     ctx.font = headFont; ctx.textBaseline = 'top';
 
     if (Array.isArray(headlineGradient) && headlineGradient.length >= 2) {
-        // Gradiente vertical a lo largo del bloque de título
         const hGr = ctx.createLinearGradient(marginL, zoneTop, marginL, zoneTop + U * 5);
         headlineGradient.forEach((c, i) => hGr.addColorStop(i / (headlineGradient.length - 1), c));
         ctx.fillStyle = hGr;
@@ -396,14 +421,12 @@ function drawText(ctx, W, H, ts, format) {
     wrapText(ctx, headline, marginL, zoneTop, maxWidth, U * 2.2);
     const hLines = countLines(ctx, headline, maxWidth, headFont);
 
-    // Tagline
     const tagTop = zoneTop + hLines * U * 2.2 + U * .7;
     ctx.font = `${U}px Arial, sans-serif`;
     ctx.fillStyle = taglineColor;
     wrapText(ctx, tagline, marginL, tagTop, maxWidth, U * 1.35);
     ctx.restore();
 
-    // Botón CTA
     if (cta) {
         ctx.save();
         const ctaFont = `bold ${U * .95}px Arial, sans-serif`;
@@ -427,15 +450,6 @@ function drawText(ctx, W, H, ts, format) {
 
 // ─── Decoraciones contextuales ────────────────────────────────────────────────
 
-/**
- * Dibuja elementos temáticos generados por la IA.
- * layer: 'bg' (detrás del producto) | 'front' (delante del todo)
- *
- * Tipos soportados:
- *   sportsball  — balón de fútbol
- *   star        — estrella con gradiente radial
- *   sparkle     — destello de 4 puntas
- */
 function drawContextualDecor(ctx, W, H, items, layer) {
     (items || [])
         .filter(d => (d.layer || 'bg') === (layer || 'bg'))
@@ -445,7 +459,6 @@ function drawContextualDecor(ctx, W, H, items, layer) {
             const cy = H * (item.y ?? item.cy ?? .1);
             ctx.save();
             ctx.globalAlpha = item.opacity ?? .7;
-
             switch (item.type) {
                 case 'sportsball':
                     drawSoccerBall(ctx, cx, cy, size / 2);
@@ -487,11 +500,6 @@ function drawProductPlaceholder(ctx, W, H, format, offerType) {
 
 // ─── Composición ─────────────────────────────────────────────────────────────
 
-/**
- * Composición completa:
- *   1 · Fondo  →  2 · Decoraciones bg  →  3 · Overlay
- *   4 · Producto  →  5 · Texto  →  6 · Decoraciones front
- */
 async function composeAd({ bgSpec, textSpec, contextualDecor, productImg, format, offerType }) {
     const fmt = FORMATS.find(f => f.id === format) ?? FORMATS[0];
     const W = fmt.w, H = fmt.h;
@@ -499,20 +507,15 @@ async function composeAd({ bgSpec, textSpec, contextualDecor, productImg, format
     canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
 
-    // 1 · Fondo generado por IA
     drawBackground(ctx, W, H, bgSpec);
-
-    // 2 · Decoraciones de fondo (balón, estrellas grandes) — detrás del producto
     drawContextualDecor(ctx, W, H, contextualDecor, 'bg');
 
-    // 3 · Overlay de legibilidad
     const overlay = ctx.createLinearGradient(0, H * .40, 0, H);
     overlay.addColorStop(0, 'rgba(0,0,0,0)');
     overlay.addColorStop(1, 'rgba(0,0,0,0.65)');
     ctx.fillStyle = overlay;
     ctx.fillRect(0, 0, W, H);
 
-    // 4 · Imagen del producto (12 % más grande que v1, mejor sombra)
     if (productImg) {
         try {
             const img = await loadImage(productImg);
@@ -533,10 +536,7 @@ async function composeAd({ bgSpec, textSpec, contextualDecor, productImg, format
         drawProductPlaceholder(ctx, W, H, format, offerType);
     }
 
-    // 5 · Texto (badge + headline + tagline + CTA)
     drawText(ctx, W, H, textSpec, format);
-
-    // 6 · Decoraciones de primer plano (sparkles, destellos)
     drawContextualDecor(ctx, W, H, contextualDecor, 'front');
 
     return canvas;
@@ -544,42 +544,35 @@ async function composeAd({ bgSpec, textSpec, contextualDecor, productImg, format
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
-/** Intento primario: imágenes generadas por IA (Groq + HuggingFace FLUX) */
 async function generateAdImages({ offerName, offerType, title, tagline, cta, productName, format }) {
     const res = await fetch('/api/ai/ad-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ offerName, offerType, title, tagline, cta, productName, format }),
     });
-
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Error ${res.status}`);
     }
-
     const data = await res.json();
-    return data.variants; // [{ style, imageBase64, mimeType, prompt }]
+    return data.variants;
 }
 
-/** Fallback: specs JSON para renderizar con Canvas local (solo usa Groq, gratis) */
 async function fetchCanvasSpecs({ offerName, offerType, title, tagline, cta, productName, format }) {
     const res = await fetch('/api/ai/ad-generate-specs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ offerName, offerType, title, tagline, cta, productName, format }),
     });
-
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Error ${res.status}`);
     }
-
     const data = await res.json();
-    return data.variants; // [{ style, bgSpec, textSpec, contextualDecor }]
+    return data.variants;
 }
-// ─── Componente modal ─────────────────────────────────────────────────────────
 
-export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) {
+function AdCreatorModalOriginal({ isOpen, onClose, offer, offers = [] }) {
     const [step, setStep] = useState(1);
     const [activeOffer, setActiveOffer] = useState(offer);
     const [title, setTitle] = useState('');
@@ -592,7 +585,7 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
     const [canvases, setCanvases] = useState([]);
     const [selected, setSelected] = useState(null);
     const [error, setError] = useState('');
-    const [adMode, setAdMode] = useState(null); // 'ai' | 'canvas' | null
+    const [adMode, setAdMode] = useState(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -608,8 +601,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
         ?? null;
     const productName = activeOffer?.products?.[0]?.name ?? activeOffer?.name ?? '';
 
-    // ── Generación con fallback automático ─────────────────────────────────────
-
     const handleGenerate = useCallback(async () => {
         setGenerating(true); setError(''); setCanvases([]); setSelected(null);
         setProgress(0); setStep(3); setAdMode(null);
@@ -620,7 +611,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
             title, tagline, cta, productName, format,
         };
 
-        // ── Intento 1: Imágenes generadas con IA (HuggingFace) ───────────
         try {
             setProgressMsg('Generando imágenes con IA…');
             setProgress(10);
@@ -648,7 +638,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
             console.warn('[AdCreator] IA no disponible, intentando Canvas:', aiErr.message);
         }
 
-        // ── Intento 2: Fallback con Canvas local (Groq specs → Canvas) ───
         try {
             setProgress(15);
             setProgressMsg('Diseñando con Canvas local…');
@@ -687,8 +676,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
         setGenerating(false);
     }, [activeOffer, title, tagline, cta, productName, format, productImg]);
 
-    // ─── Reemplaza handleDownload ────────────────────────────────────────────────
-
     const handleDownload = useCallback((idx) => {
         const item = canvases[idx];
         if (!item) return;
@@ -715,7 +702,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                 className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
                 style={{ width: '100%', maxWidth: '560px', minWidth: '320px', maxHeight: '92vh' }}
             >
-                {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
                     <div>
                         <h2 className="text-[17px] font-bold text-gray-900 flex items-center gap-2">
@@ -735,7 +721,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                     </button>
                 </div>
 
-                {/* Step indicator */}
                 <div className="flex items-center px-6 py-3 gap-2 border-b border-gray-200 shrink-0">
                     {[1, 2, 3].map((s, idx) => (
                         <div key={s} className="flex items-center gap-2">
@@ -755,10 +740,8 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                     ))}
                 </div>
 
-                {/* Body */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
-                    {/* ── PASO 1: Mensaje ── */}
                     {step === 1 && (
                         <div className="space-y-4">
                             <div>
@@ -836,7 +819,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                         </div>
                     )}
 
-                    {/* ── PASO 2: Formato ── */}
                     {step === 2 && (
                         <div className="space-y-3">
                             <p className="text-[13px] text-gray-500">
@@ -889,7 +871,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                         </div>
                     )}
 
-                    {/* ── PASO 3: Generando ── */}
                     {step === 3 && generating && (
                         <div className="flex flex-col items-center gap-5 py-8">
                             <div className="relative w-[60px] h-[60px]">
@@ -940,7 +921,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                         </div>
                     )}
 
-                    {/* ── PASO 3: Resultados ── */}
                     {step === 3 && !generating && canvases.length > 0 && (
                         <div className="space-y-4">
                             {error && (
@@ -1006,7 +986,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                         </div>
                     )}
 
-                    {/* ── PASO 3: Error ── */}
                     {step === 3 && !generating && error && canvases.length === 0 && (
                         <div className="flex flex-col items-center gap-4 py-10 text-center">
                             <span className="material-symbols-outlined text-red-400 text-[48px]">error_outline</span>
@@ -1024,7 +1003,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
                     )}
                 </div>
 
-                {/* Footer */}
                 <div className="px-6 py-4 border-t border-gray-200 shrink-0 flex items-center justify-between gap-3">
                     <button
                         onClick={() => {
@@ -1075,8 +1053,6 @@ export default function AdCreatorModal({ isOpen, onClose, offer, offers = [] }) 
     );
 }
 
-// ─── Sub-componentes ──────────────────────────────────────────────────────────
-
 function CanvasCard({ canvas: item, label, isSelected, onSelect, onDownload }) {
   return (
     <div
@@ -1122,3 +1098,5 @@ function FieldLabel({ children, required }) {
         </label>
     );
 }
+
+═══════════════════════════════════════════════════════════════════════════ */

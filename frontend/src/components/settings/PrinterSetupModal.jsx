@@ -1,11 +1,25 @@
 import { useState, useEffect } from 'react';
-import { cacheBtDevice, sendToPrinterDirect, PRINTER_SERVICE_UUIDS } from '../../services/printerService';
+import { cacheBtDevice, scanForPrinter, sendTestTicket } from '../../services/printerService';
+import { isCapacitor } from '../../services/runtimeEnv';
 import { buildTestTicket } from '../../services/ticketBuilder';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Recuperar referencia BT guardada sin pedir al usuario que reseleccione
+   ───────────────────────────────────────────────────────────────────────────
+   FASE 2: en Capacitor no existe navigator.bluetooth.getDevices() — el
+   emparejamiento vive a nivel sistema Android, no a nivel "permiso de
+   origin". Por eso esta función, en Capacitor, simplemente confirma que
+   hay una address guardada (el deviceId) y no necesita "buscar" nada: el
+   intento real de reconexión ocurre al momento de imprimir
+   (sendTestTicket / printSaleTicket), exactamente igual que con cualquier
+   otra impresora BT del sistema operativo.
 ═══════════════════════════════════════════════════════════════════════════ */
 async function getStoredBtDevice(address) {
+  if (isCapacitor()) {
+    // No hay objeto "vivo" que recuperar — basta con devolver un marcador
+    // mínimo para que la UI muestre "vinculado" si ya existe una address.
+    return address ? { id: address, name: null, __capacitorStub: true } : null;
+  }
   if (!navigator.bluetooth?.getDevices) return null;
   const devices = await navigator.bluetooth.getDevices();
   return devices.find(d => d.id === address || d.name === address) ?? null;
@@ -32,7 +46,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
   const [ticketWidth, setTicketWidth] = useState(existingDevice?.config?.ticketWidth ?? '58');
 
   /* Bluetooth */
-  const [btDevice, setBtDevice] = useState(null);   // BluetoothDevice vivo
+  const [btDevice, setBtDevice] = useState(null);   // { id, name, raw } normalizado (web y capacitor)
   const [scanning, setScanning] = useState(false);
   const [btError, setBtError] = useState('');
   const [restoring, setRestoring] = useState(false);  // buscando dispositivo guardado
@@ -49,9 +63,11 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
     setRestoring(true);
     getStoredBtDevice(existingDevice.address)
       .then(found => {
-        if (found) setBtDevice(found);
+        if (found) {
+          setBtDevice({ id: found.id, name: found.name, raw: found.__capacitorStub ? null : found });
+        }
       })
-      .catch(() => { /* getDevices no disponible, el usuario tendrá que re-emparejar */ })
+      .catch(() => { /* el usuario tendrá que re-vincular */ })
       .finally(() => setRestoring(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -61,26 +77,19 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
     setStep(2);
   };
 
-  /* ── Escaneo / selección BT ── */
+  /* ── Escaneo / selección BT ──
+     FASE 2: scanForPrinter() decide internamente si abre el selector nativo
+     de Capacitor o navigator.bluetooth.requestDevice() en web — el modal ya
+     no necesita saber en qué entorno está. */
   const handleBluetoothScan = async () => {
     setBtError('');
     setScanning(true);
     try {
-      if (!navigator.bluetooth) {
-        setBtError(
-          'Web Bluetooth no está disponible. Usa Chrome en Android (v56+). ' +
-          'En iOS no está soportado.'
-        );
-        return;
-      }
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: PRINTER_SERVICE_UUIDS,
-      });
-      setBtDevice(device);
-      setAddress(device.id ?? device.name ?? '');
-      if (printerName === 'Impresora de tickets' && device.name) {
-        setPrinterName(device.name);
+      const found = await scanForPrinter(); // { id, name, raw }
+      setBtDevice(found);
+      setAddress(found.id ?? '');
+      if (printerName === 'Impresora de tickets' && found.name) {
+        setPrinterName(found.name);
       }
     } catch (err) {
       if (err.name !== 'NotFoundError') setBtError('Error: ' + err.message);
@@ -89,7 +98,8 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
     }
   };
 
-  /* ── Prueba de impresión real ── */
+  /* ── Prueba de impresión real ──
+     FASE 2: sendTestTicket() decide internamente web vs capacitor. */
   const handleTestPrint = async () => {
     setTestStatus('printing');
     setTestError('');
@@ -97,7 +107,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
       if (connectionType === 'bluetooth') {
         if (!btDevice) throw new Error('No hay dispositivo Bluetooth vinculado.');
         const ticket = buildTestTicket(printerName, ticketWidth);
-        await sendToPrinterDirect(btDevice, ticket);
+        await sendTestTicket(btDevice.id, btDevice.raw, ticket);
       } else {
         /* Windows: no hay acceso directo desde el navegador.
            El ticket se abre en una ventana de impresión del sistema. */
@@ -132,7 +142,6 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
   };
 
   /* ── Guardar ── */
-  // Reemplazar handleSave completo:
   const handleSave = () => {
     const saved = {
       id: existingDevice?.id ?? `device_${Date.now()}`,
@@ -144,9 +153,11 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
       config: { autoPrint, openDrawer, ticketWidth },
     };
 
-    // ← Clave: guardar la referencia BT viva en el caché del servicio
-    if (connectionType === 'bluetooth' && btDevice) {
-      cacheBtDevice(saved.address, btDevice);
+    // ← Clave: guardar la referencia BT viva en el caché del servicio.
+    // En Capacitor, cacheBtDevice() es un no-op seguro (no hay objeto vivo
+    // que cachear — el deviceId guardado en saved.address ya es suficiente).
+    if (connectionType === 'bluetooth' && btDevice?.raw) {
+      cacheBtDevice(saved.address, btDevice.raw);
     }
 
     onSave(saved);
@@ -215,7 +226,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
             <div className="flex flex-col gap-2">
               <p className="text-on-surface-variant text-[12px] mb-1">¿Cómo vas a conectar la impresora?</p>
               <ConnectionOption icon="bluetooth" title="Bluetooth"
-                description="Para celular o tableta Android con Chrome"
+                description="Para celular o tableta Android"
                 onClick={() => handleSelectType('bluetooth')} />
               <ConnectionOption icon="computer" title="Cola de impresión Windows"
                 description="Para PC con impresora conectada por USB"

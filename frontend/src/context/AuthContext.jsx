@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { authService } from '../services/api';
-import { reconnectBTPrinters } from '../services/printerService'; // ← NUEVO
+import { reconnectBTPrinters, startBTWatcher } from '../services/printerService'; // ← startBTWatcher es NUEVO
 
 const AuthContext = createContext(null);
 
@@ -12,6 +12,14 @@ export function AuthProvider({ children }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        // ── NUEVO: activa el watcher de reconexión BT (visibilitychange) ──
+        // Se hace fuera del bloque de sesión a propósito: cubre el caso de
+        // que la conexión GATT se caiga en background mientras la sesión
+        // sigue activa (sessionStorage no se borró, pero el navegador sí
+        // tiró la conexión). startBTWatcher() es idempotente, así que no
+        // hay riesgo de engancharlo dos veces.
+        startBTWatcher();
+
         const savedToken   = sessionStorage.getItem('numa_token');
         const savedUser    = sessionStorage.getItem('numa_user');
         const savedTenant  = sessionStorage.getItem('numa_tenant');
@@ -39,7 +47,7 @@ export function AuthProvider({ children }) {
         sessionStorage.setItem('numa_tenant',  JSON.stringify(data.tenant));
         if (data.license) sessionStorage.setItem('numa_license', JSON.stringify(data.license));
 
-        // ← NUEVO: reconectar impresora BT tras login o registro
+        // Reconectar impresora BT tras login o registro
         reconnectBTPrinters();
     };
 

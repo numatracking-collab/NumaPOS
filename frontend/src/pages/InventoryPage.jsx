@@ -5,10 +5,8 @@ import ProductCard from '../components/ProductCard';
 import InventoryDetailPanel from '../components/inventory/InventoryDetailPanel';
 import ProductFormModal from '../components/inventory/ProductFormModal';
 import CategoryManagerModal from '../components/inventory/CategoryManagerModal';
-//  Por esto:
-// 💡 Modifica tu importación para que quede así:
-// 💡 Cambiamos 'categoriesService as categoryService' por simplemente 'categoryService'
 import { inventoryService as productService, categoryService } from '../services/api';
+
 export default function InventoryPage() {
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
@@ -44,7 +42,12 @@ export default function InventoryPage() {
         }
     };
 
-    // Product actions
+    // ── Editar producto ── (usada tanto desde la tarjeta como desde el detalle)
+    const handleEditProduct = (product) => {
+        setProductToEdit(product);
+        setIsProductModalOpen(true);
+    };
+
     const handleSaveProduct = async (productData) => {
         try {
             if (productToEdit) {
@@ -64,15 +67,15 @@ export default function InventoryPage() {
         }
     };
 
+    // ── Eliminar producto ──
+    // La confirmación y el manejo de errores ahora viven en ConfirmDeleteModal
+    // (dentro de InventoryDetailPanel), así que esta función solo ejecuta la
+    // petición. Si falla, dejamos que el error suba: el modal lo atrapa y
+    // lo muestra, sin cerrarse, para que el usuario pueda reintentar.
     const handleDeleteProduct = async (product) => {
-        if (!confirm(`¿Estás seguro de eliminar el producto "${product.name}"?`)) return;
-        try {
-            await productService.delete(product.id);
-            if (selectedProduct?.id === product.id) setSelectedProduct(null);
-            loadData();
-        } catch (err) {
-            alert('Error al eliminar: ' + err.message);
-        }
+        await productService.delete(product.id);
+        if (selectedProduct?.id === product.id) setSelectedProduct(null);
+        loadData();
     };
 
     // Filter products
@@ -152,8 +155,6 @@ export default function InventoryPage() {
                                         key={product.id} 
                                         product={product} 
                                         onSelect={setSelectedProduct}
-                                        onEdit={(p) => { setProductToEdit(p); setIsProductModalOpen(true); }}
-                                        onDelete={handleDeleteProduct}
                                     />
                                 ))
                             )}
@@ -169,8 +170,9 @@ export default function InventoryPage() {
                         setProducts(products.map(p => p.id === selectedProduct.id ? { ...p, stock: newStock } : p));
                         setSelectedProduct({ ...selectedProduct, stock: newStock });
                     }}
-                    // ¡AQUÍ ESTABA EL ERROR! Cambiado a setSelectedProduct
                     onBack={() => setSelectedProduct(null)} 
+                    onEdit={handleEditProduct}
+                    onDelete={handleDeleteProduct}
                 />
             </main>
 

@@ -1,6 +1,19 @@
+import OnDevelopment from '../OnDevelopment';
+
+export default function MyImagesPanel() {
+    return (
+        <OnDevelopment
+            title="¡Tus imágenes con IA ya casi están listas!"
+            message="Estamos trabajando en el desarrollo de este módulo, lo podrás utilizar muy pronto."
+        />
+    );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Implementación original (mock), conservada por si se retoma pronto:
+
 import { useState } from 'react';
 
-// TODO: reemplazar con marketingService.getImages()
 const MOCK_IMAGES = [
     { id: 1, offerName: 'Promo Fin de Semana',     format: 'square', date: '2026-06-07', from: '#6750A4', to: '#9C84D4' },
     { id: 2, offerName: 'Miércoles de Descuento',  format: 'story',  date: '2026-06-05', from: '#1B4332', to: '#2D6A4F' },
@@ -18,7 +31,7 @@ function formatDate(dateStr) {
     return `${d}/${m}/${y.slice(2)}`;
 }
 
-export default function MyImagesPanel() {
+function MyImagesPanelOriginal() {
     const [filter, setFilter] = useState('all');
 
     const offerFilters = [
@@ -27,18 +40,6 @@ export default function MyImagesPanel() {
     ];
 
     const filtered = filter === 'all' ? MOCK_IMAGES : MOCK_IMAGES.filter(img => img.offerName === filter);
-
-    if (MOCK_IMAGES.length === 0) {
-        return (
-            <div className="h-full flex flex-col items-center justify-center gap-md text-on-surface-variant px-lg text-center">
-                <span className="material-symbols-outlined text-[64px]">photo_library</span>
-                <div>
-                    <p className="font-bold text-[18px] text-on-surface mb-xs">No tienes imágenes aún</p>
-                    <p className="text-[13px]">Abre una oferta y presiona <strong>Crear Publicidad</strong> para generar tu primera imagen.</p>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="h-full flex flex-col overflow-hidden">
@@ -93,3 +94,4 @@ function ActionBtn({ icon, title, danger }) {
         </button>
     );
 }
+───────────────────────────────────────────────────────────────────────── */

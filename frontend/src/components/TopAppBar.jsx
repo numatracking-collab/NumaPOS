@@ -4,11 +4,91 @@
    — Selector de caja: menú compacto con acordeón para elegir caja,
      y accesos directos grandes a Movimiento de caja / Realizar corte.
    — Selector de serie de facturación.
+   — Los menús desplegables se renderizan vía Portal a document.body para
+     evitar que contenedores con overflow (ej. la fila scrolleable en móvil)
+     los recorten. Ver DropdownPortal más abajo.
 ═══════════════════════════════════════════════════════════════════════════ */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { cajasService, seriesService as invoiceSeriesService } from '../services/api';
 import MovimientoCajaModal from './MovimientoCajaModal';
 import CorteCajaModal      from './CorteCajaModal';
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DropdownPortal
+   Renderiza su contenido directamente en document.body, posicionado con
+   `position: fixed` según la posición real del botón que lo dispara
+   (anchorRef). Esto evita que contenedores padre con overflow-x/y lo recorten
+   (problema típico en filas con scroll horizontal en móvil/Android WebView).
+══════════════════════════════════════════════════════════════════════════ */
+function DropdownPortal({ anchorRef, open, onClose, width = 288, children }) {
+    const portalRef = useRef(null);
+    const [pos, setPos] = useState(null);
+
+    useLayoutEffect(() => {
+        if (!open || !anchorRef.current) return;
+
+        const update = () => {
+            if (!anchorRef.current) return;
+            const rect = anchorRef.current.getBoundingClientRect();
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            const w  = Math.min(width, vw - 16);
+
+            let left = Math.max(8, Math.min(rect.left, vw - w - 8));
+            let top  = rect.bottom + 4;
+
+            // Si no cabe debajo, lo abrimos hacia arriba del botón.
+            const maxDropHeight = Math.min(360, vh * 0.7);
+            if (top + maxDropHeight > vh - 8 && rect.top - maxDropHeight > 8) {
+                top = rect.top - maxDropHeight - 4;
+            }
+
+            setPos({ top, left, width: w, maxHeight: maxDropHeight });
+        };
+
+        update();
+        // capture: true para detectar scroll de CUALQUIER contenedor anidado,
+        // no solo el de window (ej. la fila horizontal scrolleable en móvil).
+        window.addEventListener('resize', update);
+        window.addEventListener('scroll', update, true);
+        return () => {
+            window.removeEventListener('resize', update);
+            window.removeEventListener('scroll', update, true);
+        };
+    }, [open, anchorRef, width]);
+
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e) => {
+            if (portalRef.current?.contains(e.target)) return;
+            if (anchorRef.current?.contains(e.target)) return;
+            onClose();
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [open, onClose, anchorRef]);
+
+    if (!open || !pos) return null;
+
+    return createPortal(
+        <div
+            ref={portalRef}
+            style={{
+                position: 'fixed',
+                top: pos.top,
+                left: pos.left,
+                width: pos.width,
+                maxHeight: pos.maxHeight,
+                zIndex: 9999,
+            }}
+            className="overflow-y-auto"
+        >
+            {children}
+        </div>,
+        document.body
+    );
+}
 
 export default function TopAppBar({
     searchValue,
@@ -43,22 +123,11 @@ export default function TopAppBar({
     const [showMovimiento, setShowMovimiento] = useState(false);
     const [showCorte,      setShowCorte]      = useState(false);
 
-    // Refs para cierre al hacer clic afuera
-    const cajaRefD  = useRef(null);
-    const serieRefD = useRef(null);
-    const cajaRefM  = useRef(null);
-    const serieRefM = useRef(null);
-
-    useEffect(() => {
-        const handler = (e) => {
-            if (cajaRefD.current  && !cajaRefD.current.contains(e.target))  setCajaOpenD(false);
-            if (serieRefD.current && !serieRefD.current.contains(e.target)) setSerieOpenD(false);
-            if (cajaRefM.current  && !cajaRefM.current.contains(e.target))  setCajaOpenM(false);
-            if (serieRefM.current && !serieRefM.current.contains(e.target)) setSerieOpenM(false);
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, []);
+    // Refs de los botones que disparan cada dropdown (anclas para el portal)
+    const cajaBtnRefD  = useRef(null);
+    const serieBtnRefD = useRef(null);
+    const cajaBtnRefM  = useRef(null);
+    const serieBtnRefM = useRef(null);
 
     useEffect(() => {
         fetchCajas();
@@ -150,7 +219,7 @@ export default function TopAppBar({
         ? `${selectedSerie.prefix}${String(selectedSerie.next_folio).padStart(4, '0')}`
         : '—';
 
-    /* ── Props comunes para ambas instancias de CajaDropdown ──────────── */
+    /* ── Props comunes para ambas instancias de CajaDropdownContent ────── */
     const cajaDropdownCommonProps = {
         cajas, selectedCaja,
         cajaForm, newCajaName, cajaError, creating,
@@ -161,6 +230,16 @@ export default function TopAppBar({
         onCreate:      handleCreateCaja,
         onMovimiento:  handleOpenMovimiento,
         onCorte:       handleOpenCorte,
+    };
+
+    const serieDropdownCommonProps = {
+        series, selectedSerie,
+        serieForm, newSerie, serieError, creating,
+        onSelect:      applySelectSerie,
+        onShowForm:    () => setSerieForm(true),
+        onSerieChange: (field, val) => setNewSerie(p => ({ ...p, [field]: val })),
+        onCancel:      closeSerieDropdown,
+        onCreate:      handleCreateSerie,
     };
 
     const UtilIcons = () => (
@@ -221,8 +300,9 @@ export default function TopAppBar({
                                 <div className="h-8 w-[1px] bg-outline-variant mx-xs" />
 
                                 {/* Caja — desktop */}
-                                <div ref={cajaRefD} className="relative">
+                                <div className="relative">
                                     <button
+                                        ref={cajaBtnRefD}
                                         onClick={() => { setCajaOpenD(o => !o); setSerieOpenD(false); }}
                                         className={`flex items-center gap-1.5 px-3 h-9 rounded-lg border transition-all text-[13px] font-medium ${cajaOpenD ? 'bg-secondary/10 border-secondary text-secondary' : 'bg-surface-container-low border-outline-variant text-on-surface hover:bg-surface-container-high'}`}
                                     >
@@ -230,12 +310,15 @@ export default function TopAppBar({
                                         <span className="max-w-[110px] truncate">{selectedCaja ? selectedCaja.name : 'Sin caja'}</span>
                                         <span className={`material-symbols-outlined text-[16px] text-outline-variant transition-transform ${cajaOpenD ? 'rotate-180' : ''}`}>expand_more</span>
                                     </button>
-                                    {cajaOpenD && <CajaDropdown {...cajaDropdownCommonProps} />}
                                 </div>
+                                <DropdownPortal anchorRef={cajaBtnRefD} open={cajaOpenD} onClose={closeCajaDropdown} width={288}>
+                                    <CajaDropdownContent {...cajaDropdownCommonProps} />
+                                </DropdownPortal>
 
                                 {/* Serie — desktop */}
-                                <div ref={serieRefD} className="relative">
+                                <div className="relative">
                                     <button
+                                        ref={serieBtnRefD}
                                         onClick={() => { setSerieOpenD(o => !o); setCajaOpenD(false); }}
                                         className={`flex items-center gap-1.5 px-3 h-9 rounded-lg border transition-all text-[13px] font-medium ${serieOpenD ? 'bg-secondary/10 border-secondary text-secondary' : 'bg-surface-container-low border-outline-variant text-on-surface hover:bg-surface-container-high'}`}
                                     >
@@ -243,19 +326,10 @@ export default function TopAppBar({
                                         <span className="font-mono text-[12px]">{nextFolioLabel}</span>
                                         <span className={`material-symbols-outlined text-[16px] text-outline-variant transition-transform ${serieOpenD ? 'rotate-180' : ''}`}>expand_more</span>
                                     </button>
-                                    {serieOpenD && (
-                                        <SerieDropdown
-                                            series={series} selectedSerie={selectedSerie}
-                                            serieForm={serieForm} newSerie={newSerie}
-                                            serieError={serieError} creating={creating}
-                                            onSelect={applySelectSerie}
-                                            onShowForm={() => setSerieForm(true)}
-                                            onSerieChange={(field, val) => setNewSerie(p => ({ ...p, [field]: val }))}
-                                            onCancel={closeSerieDropdown}
-                                            onCreate={handleCreateSerie}
-                                        />
-                                    )}
                                 </div>
+                                <DropdownPortal anchorRef={serieBtnRefD} open={serieOpenD} onClose={closeSerieDropdown} width={288}>
+                                    <SerieDropdownContent {...serieDropdownCommonProps} />
+                                </DropdownPortal>
 
                                 <div className="h-8 w-[1px] bg-outline-variant mx-xs" />
                             </>
@@ -293,8 +367,9 @@ export default function TopAppBar({
                                 <div className="h-6 w-[1px] bg-outline-variant shrink-0" />
 
                                 {/* Caja — móvil */}
-                                <div ref={cajaRefM} className="relative shrink-0">
+                                <div className="relative shrink-0">
                                     <button
+                                        ref={cajaBtnRefM}
                                         onClick={() => { setCajaOpenM(o => !o); setSerieOpenM(false); }}
                                         className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border transition-all text-[11px] font-medium ${cajaOpenM ? 'bg-secondary/10 border-secondary text-secondary' : 'bg-surface-container-low border-outline-variant text-on-surface'}`}
                                     >
@@ -302,12 +377,15 @@ export default function TopAppBar({
                                         <span className="max-w-[72px] truncate">{selectedCaja ? selectedCaja.name : 'Sin caja'}</span>
                                         <span className={`material-symbols-outlined text-[13px] text-outline-variant transition-transform ${cajaOpenM ? 'rotate-180' : ''}`}>expand_more</span>
                                     </button>
-                                    {cajaOpenM && <CajaDropdown {...cajaDropdownCommonProps} />}
                                 </div>
+                                <DropdownPortal anchorRef={cajaBtnRefM} open={cajaOpenM} onClose={closeCajaDropdown} width={272}>
+                                    <CajaDropdownContent {...cajaDropdownCommonProps} />
+                                </DropdownPortal>
 
                                 {/* Serie — móvil */}
-                                <div ref={serieRefM} className="relative shrink-0">
+                                <div className="relative shrink-0">
                                     <button
+                                        ref={serieBtnRefM}
                                         onClick={() => { setSerieOpenM(o => !o); setCajaOpenM(false); }}
                                         className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border transition-all text-[11px] font-medium ${serieOpenM ? 'bg-secondary/10 border-secondary text-secondary' : 'bg-surface-container-low border-outline-variant text-on-surface'}`}
                                     >
@@ -315,19 +393,10 @@ export default function TopAppBar({
                                         <span className="font-mono text-[11px]">{nextFolioLabel}</span>
                                         <span className={`material-symbols-outlined text-[13px] text-outline-variant transition-transform ${serieOpenM ? 'rotate-180' : ''}`}>expand_more</span>
                                     </button>
-                                    {serieOpenM && (
-                                        <SerieDropdown
-                                            series={series} selectedSerie={selectedSerie}
-                                            serieForm={serieForm} newSerie={newSerie}
-                                            serieError={serieError} creating={creating}
-                                            onSelect={applySelectSerie}
-                                            onShowForm={() => setSerieForm(true)}
-                                            onSerieChange={(field, val) => setNewSerie(p => ({ ...p, [field]: val }))}
-                                            onCancel={closeSerieDropdown}
-                                            onCreate={handleCreateSerie}
-                                        />
-                                    )}
                                 </div>
+                                <DropdownPortal anchorRef={serieBtnRefM} open={serieOpenM} onClose={closeSerieDropdown} width={272}>
+                                    <SerieDropdownContent {...serieDropdownCommonProps} />
+                                </DropdownPortal>
                             </div>
                             <UtilIcons />
                         </>
@@ -339,13 +408,15 @@ export default function TopAppBar({
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   CajaDropdown
+   CajaDropdownContent
+   Contenido del menú de caja. Ya NO incluye posicionamiento absolute/fixed
+   ni z-index: eso lo resuelve DropdownPortal, que es quien lo monta.
    — "Caja actual" como acordeón: al tocarlo se despliega la lista de cajas
      (y la opción de crear una nueva) dentro del mismo menú, sin cerrarlo.
    — Movimiento de caja / Realizar corte como acciones principales, grandes
      y con más espacio táctil — son las que más se usan en el día a día.
 ══════════════════════════════════════════════════════════════════════════ */
-function CajaDropdown({
+function CajaDropdownContent({
     cajas, selectedCaja,
     cajaForm, newCajaName, cajaError, creating,
     onSelect, onShowForm, onNameChange, onCancel, onCreate,
@@ -354,7 +425,7 @@ function CajaDropdown({
     const [selectorOpen, setSelectorOpen] = useState(false);
 
     return (
-        <div className="absolute left-0 top-full mt-1 w-72 bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant/20 overflow-hidden z-[200]">
+        <div className="bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant/20 overflow-hidden">
 
             {/* ── Selector de caja (acordeón) ── */}
             <div className="border-b border-outline-variant/20">
@@ -438,11 +509,11 @@ function CajaDropdown({
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   SerieDropdown (sin cambios respecto a la versión anterior)
+   SerieDropdownContent
 ══════════════════════════════════════════════════════════════════════════ */
-function SerieDropdown({ series, selectedSerie, serieForm, newSerie, serieError, creating, onSelect, onShowForm, onSerieChange, onCancel, onCreate }) {
+function SerieDropdownContent({ series, selectedSerie, serieForm, newSerie, serieError, creating, onSelect, onShowForm, onSerieChange, onCancel, onCreate }) {
     return (
-        <div className="absolute left-0 top-full mt-1 w-72 bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant/20 overflow-hidden z-[200]">
+        <div className="bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant/20 overflow-hidden">
             {series.length === 0 ? (
                 <p className="px-4 py-3 text-[13px] text-on-surface-variant">No hay series creadas.</p>
             ) : (

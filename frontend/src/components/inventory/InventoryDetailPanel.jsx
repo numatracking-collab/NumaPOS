@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { inventoryService } from '../../services/api';
+import ConfirmDeleteModal from './ConfirmDeleteModal';
 
-export default function InventoryDetailPanel({ product, onStockAdjusted, onBack }) {
+export default function InventoryDetailPanel({ product, onStockAdjusted, onBack, onEdit, onDelete }) {
     const [adjustments, setAdjustments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [historyOpen, setHistoryOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [adjustForm, setAdjustForm] = useState({ type: 'IN', quantity: '', reason: 'ingreso de mercancia' });
     const [error, setError] = useState('');
     const menuRef = useRef(null);
@@ -17,6 +19,8 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
             setAdjustForm({ type: 'IN', quantity: '', reason: 'ingreso de mercancia' });
             setError('');
             setHistoryOpen(false);
+            setMenuOpen(false);
+            setDeleteModalOpen(false);
         }
     }, [product]);
 
@@ -75,6 +79,13 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
         } catch (err) {
             setError(err.message || 'Ocurrió un error al intentar guardar el ajuste.');
         }
+    };
+
+    // ── Eliminar producto ───────────────────────────────────────────────────
+    const handleConfirmDelete = async () => {
+        await onDelete(product); // si lanza error, ConfirmDeleteModal lo muestra y no cierra
+        setDeleteModalOpen(false);
+        if (onBack) onBack(); // el producto ya no existe: regresamos a la lista en móvil
     };
 
     // ── Derivados del producto ──────────────────────────────────────────────
@@ -159,45 +170,68 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                     </div>
                 )}
 
-                {/* 3-dot menu */}
-                <div className="absolute top-3 right-3 z-10" ref={menuRef}>
-                    <button
-                        onClick={() => setMenuOpen((v) => !v)}
-                        className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
-                        aria-label="Abrir opciones de ajuste de inventario"
-                        aria-expanded={menuOpen}
-                    >
-                        <span className="material-symbols-outlined text-[24px] text-on-surface">more_vert</span>
-                    </button>
-
-                    {menuOpen && (
-                        <div className="absolute right-0 top-12 w-64 max-w-[calc(100vw-24px)] bg-white border-2 border-outline-variant/40 rounded-xl shadow-2xl z-30 overflow-hidden py-1">
-                            <p className="px-4 pt-2.5 pb-2 text-xs font-bold text-outline uppercase tracking-widest border-b border-outline-variant/30">
-                                Ajuste de inventario
-                            </p>
-                            <button
-                                onClick={() => openAdjustModal('IN')}
-                                className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left"
-                            >
-                                <span className="material-symbols-outlined text-[22px] text-tertiary">add_circle</span>
-                                Registrar entrada (+)
-                            </button>
-                            <button
-                                onClick={() => openAdjustModal('OUT')}
-                                className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
-                            >
-                                <span className="material-symbols-outlined text-[22px] text-error">remove_circle</span>
-                                Registrar salida (−)
-                            </button>
-                            <button
-                                onClick={() => openAdjustModal('IN')}
-                                className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
-                            >
-                                <span className="material-symbols-outlined text-[22px] text-secondary">tune</span>
-                                Corrección de error
-                            </button>
-                        </div>
+                {/* ── Acciones siempre visibles: Eliminar / Editar / Ajustes de inventario ── */}
+                <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+                    {onDelete && (
+                        <button
+                            onClick={() => setDeleteModalOpen(true)}
+                            className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
+                            aria-label="Eliminar producto"
+                        >
+                            <span className="material-symbols-outlined text-[22px] text-error">delete</span>
+                        </button>
                     )}
+
+                    {onEdit && (
+                        <button
+                            onClick={() => onEdit(product)}
+                            className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
+                            aria-label="Editar producto"
+                        >
+                            <span className="material-symbols-outlined text-[22px] text-secondary">edit</span>
+                        </button>
+                    )}
+
+                    {/* 3-dot menu — ajustes de inventario */}
+                    <div className="relative" ref={menuRef}>
+                        <button
+                            onClick={() => setMenuOpen((v) => !v)}
+                            className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
+                            aria-label="Abrir opciones de ajuste de inventario"
+                            aria-expanded={menuOpen}
+                        >
+                            <span className="material-symbols-outlined text-[24px] text-on-surface">more_vert</span>
+                        </button>
+
+                        {menuOpen && (
+                            <div className="absolute right-0 top-12 w-64 max-w-[calc(100vw-24px)] bg-white border-2 border-outline-variant/40 rounded-xl shadow-2xl z-30 overflow-hidden py-1">
+                                <p className="px-4 pt-2.5 pb-2 text-xs font-bold text-outline uppercase tracking-widest border-b border-outline-variant/30">
+                                    Ajuste de inventario
+                                </p>
+                                <button
+                                    onClick={() => openAdjustModal('IN')}
+                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left"
+                                >
+                                    <span className="material-symbols-outlined text-[22px] text-tertiary">add_circle</span>
+                                    Registrar entrada (+)
+                                </button>
+                                <button
+                                    onClick={() => openAdjustModal('OUT')}
+                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
+                                >
+                                    <span className="material-symbols-outlined text-[22px] text-error">remove_circle</span>
+                                    Registrar salida (−)
+                                </button>
+                                <button
+                                    onClick={() => openAdjustModal('IN')}
+                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
+                                >
+                                    <span className="material-symbols-outlined text-[22px] text-secondary">tune</span>
+                                    Corrección de error
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -374,7 +408,7 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                 </div>
             </div>
 
-            {/* ── Modal de ajuste ── */}
+            {/* ── Modal de ajuste de inventario ── */}
             {modalOpen && (
                 <div
                     className="fixed inset-0 bg-black/60 z-[60] flex items-end md:items-center md:justify-center backdrop-blur-sm"
@@ -495,6 +529,16 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack 
                     </div>
                 </div>
             )}
+
+            {/* ── Modal de confirmación de eliminación ── */}
+            <ConfirmDeleteModal
+                isOpen={deleteModalOpen}
+                onClose={() => setDeleteModalOpen(false)}
+                onConfirm={handleConfirmDelete}
+                title="¿Eliminar producto?"
+                itemName={product.name}
+                description={`¿Seguro que quieres eliminar "${product.name}"? Esta acción no se puede deshacer y se perderá su historial de inventario.`}
+            />
         </section>
     );
 }

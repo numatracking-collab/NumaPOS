@@ -1,0 +1,5 @@
+{
+  "appId": "com.numapos.app",
+  "appName": "NUMA POS",
+  "webDir": "dist"
+}

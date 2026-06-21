@@ -1,14 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import PrinterSetupModal from './PrinterSetupModal';
-import { cacheBtDevice } from '../../services/printerService';
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Constantes
-   ───────────────────────────────────────────────────────────────────────── */
-const BT_PING_INTERVAL_MS = 30_000; // 30 segundos
+import { reconnectBTPrinters, getBTWatcherStatus } from '../../services/printerService';
+import { isCapacitor } from '../../services/runtimeEnv';
 
 /* ─────────────────────────────────────────────────────────────────────────
    DevicesPanel
+   ───────────────────────────────────────────────────────────────────────────
+   FASE 2: este panel ya NO llama navigator.bluetooth directamente. Toda la
+   lógica de "intentar reconectar las impresoras BT guardadas" vive ahora en
+   printerService.reconnectBTPrinters(), que internamente decide la rama
+   correcta (Web Bluetooth o el adapter de Capacitor). Este componente solo
+   dispara esa función y lee su resultado a través de getBTWatcherStatus().
+
+   Esto también es lo que queremos para la futura Fase 3 (Electron): cuando
+   exista un adapter USB para Electron, el panel seguirá sin cambios — toda
+   la decisión de entorno queda centralizada en printerService.js.
    ───────────────────────────────────────────────────────────────────────── */
 export default function DevicesPanel() {
   const [devices, setDevices]                   = useState([]);
@@ -19,8 +25,7 @@ export default function DevicesPanel() {
   /* status map: deviceId → 'online' | 'offline' | 'checking' | 'unknown' */
   const [statusMap, setStatusMap] = useState({});
 
-  const menuRef       = useRef(null);
-  const pingTimersRef = useRef({}); // { deviceId: intervalId }
+  const menuRef = useRef(null);
 
   /* ── Cargar dispositivos guardados ─────────────────────────────── */
   useEffect(() => {
@@ -41,88 +46,55 @@ export default function DevicesPanel() {
     return () => document.removeEventListener('mousedown', handle);
   }, []);
 
-  /* ── Ping Bluetooth ──────────────────────────────────────────────
-     Verifica si el dispositivo está alcanzable.
-     IMPORTANTE: NO llamamos disconnect() después de conectar.
-     Dos razones:
-       1. gatt.connect() es idempotente — si printerService ya tiene
-          una conexión abierta, este call la reutiliza sin interrumpirla.
-       2. Mantener la conexión activa pre-calienta el canal para que
-          la impresión sea más rápida al cerrar una venta.
-  ─────────────────────────────────────────────────────────────────── */
+  /* ── Aplica el resultado de reconnectBTPrinters() al statusMap ──────────
+     reconnectBTPrinters() (en printerService.js) ya intentó conectar todas
+     las impresoras BT guardadas y dejó en getBTWatcherStatus() cuáles NO
+     se pudieron alcanzar (missingDevices). Lo demás se asume conectado. ── */
+  const applyWatcherStatus = useCallback((btDevices) => {
+    const { missingDevices } = getBTWatcherStatus();
+    const missingIds = new Set(missingDevices.map(d => d.id));
+
+    setStatusMap(prev => {
+      const next = { ...prev };
+      for (const d of btDevices) {
+        next[d.id] = missingIds.has(d.id) ? 'offline' : 'online';
+      }
+      return next;
+    });
+  }, []);
+
+  /* ── Ping de un solo dispositivo (botón de refresh manual) ───────────────
+     Reutiliza reconnectBTPrinters() — es más simple y consistente que tener
+     una ruta de reconexión paralela solo para el botón manual. */
   const pingDevice = useCallback(async (device) => {
-  if (device.connectionType === 'windows') {
-    setStatusMap(prev => ({ ...prev, [device.id]: 'online' }));
-    return;
-  }
-
-  if (!navigator.bluetooth) {
-    setStatusMap(prev => ({ ...prev, [device.id]: 'unknown' }));
-    return;
-  }
-
-  setStatusMap(prev => ({ ...prev, [device.id]: 'checking' }));
-
-  try {
-    const knownDevices = await navigator.bluetooth.getDevices?.() ?? [];
-    const found = knownDevices.find(
-      d => d.id === device.address || d.name === device.address
-    );
-
-    if (!found) {
-      setStatusMap(prev => ({ ...prev, [device.id]: 'unknown' }));
+    if (device.connectionType === 'windows') {
+      setStatusMap(prev => ({ ...prev, [device.id]: 'online' }));
       return;
     }
 
-    // Desconectar si hay conexión rota antes de reconectar
-    if (!found.gatt.connected) {
-      try { found.gatt.disconnect(); } catch { /* noop */ }
-      await new Promise(r => setTimeout(r, 500));
-    }
+    setStatusMap(prev => ({ ...prev, [device.id]: 'checking' }));
+    await reconnectBTPrinters();
+    applyWatcherStatus([device]);
+  }, [applyWatcherStatus]);
 
-    // Conectar y cachear la referencia viva
-    await found.gatt.connect();
-    cacheBtDevice(device.address, found);
-    console.info(`[Printer] Reconectado y cacheado: ${device.name}`);
-    setStatusMap(prev => ({ ...prev, [device.id]: 'online' }));
+  /* ── Al cargar: intentar reconectar impresoras BT automáticamente ───────
+     Antes este efecto reimplementaba todo el ciclo de getDevices() +
+     gatt.connect() a mano. Ahora delega por completo en
+     reconnectBTPrinters(), que ya sabe distinguir web de Capacitor. ──────── */
+  useEffect(() => {
+    const run = async () => {
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem('pos_devices') || '[]'); } catch { return; }
 
-  } catch {
-    setStatusMap(prev => ({ ...prev, [device.id]: 'offline' }));
-  }
-}, []);
+      const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
+      if (btPrinters.length === 0) return;
 
-  /* ── Arrancar/detener ping por cada dispositivo ─────────────────── */
- // ── Al cargar: intentar reconectar impresoras BT automáticamente ──────
-useEffect(() => {
-  const reconnectPrinters = async () => {
-    if (!navigator.bluetooth?.getDevices) return;
+      await reconnectBTPrinters();
+      applyWatcherStatus(btPrinters);
+    };
 
-    let saved = [];
-    try { saved = JSON.parse(localStorage.getItem('pos_devices') || '[]'); } catch { return; }
-
-    const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
-    if (btPrinters.length === 0) return;
-
-    try {
-      const known = await navigator.bluetooth.getDevices();
-      for (const printer of btPrinters) {
-        const found = known.find(d => d.id === printer.address || d.name === printer.address);
-        if (found) {
-          // Pre-conectar para calentar el canal GATT
-          try {
-            await found.gatt.connect();
-            cacheBtDevice(printer.address, found);
-            console.info(`[Printer] Pre-conectado: ${printer.name}`);
-          } catch (e) {
-            console.warn(`[Printer] Pre-conexión falló para ${printer.name}:`, e.message);
-          }
-        }
-      }
-    } catch { /* noop */ }
-  };
-
-  reconnectPrinters();
-}, []); // solo al montar
+    run();
+  }, [applyWatcherStatus]); // solo al montar (applyWatcherStatus es estable)
 
   /* ── Guardar (crear o editar) ───────────────────────────────────── */
   const handleSaveDevice = (device) => {
@@ -138,8 +110,6 @@ useEffect(() => {
 
   /* ── Eliminar ───────────────────────────────────────────────────── */
   const handleRemove = (id) => {
-    clearInterval(pingTimersRef.current[id]);
-    delete pingTimersRef.current[id];
     setStatusMap(prev => { const n = { ...prev }; delete n[id]; return n; });
     setDevices(prev => {
       const updated = prev.filter(d => d.id !== id);
