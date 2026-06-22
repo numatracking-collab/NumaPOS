@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { authService } from '../services/api';
-import { reconnectBTPrinters, startBTWatcher } from '../services/printerService'; // ← startBTWatcher es NUEVO
+import { authService, setLicenseBlockedHandler } from '../services/api';
+import { reconnectBTPrinters, startBTWatcher } from '../services/printerService';
+import LicenseExpiredModal from '../components/LicenseExpiredModal';
 
 const AuthContext = createContext(null);
 
@@ -11,13 +12,18 @@ export function AuthProvider({ children }) {
     const [token,   setToken]   = useState(null);
     const [loading, setLoading] = useState(true);
 
+    // ── Bloqueo por licencia vencida / cuenta cancelada ─────────────────
+    // null cuando no hay bloqueo. { code, message } cuando sí lo hay.
+    const [licenseBlock, setLicenseBlock] = useState(null);
+
     useEffect(() => {
-        // ── NUEVO: activa el watcher de reconexión BT (visibilitychange) ──
-        // Se hace fuera del bloque de sesión a propósito: cubre el caso de
-        // que la conexión GATT se caiga en background mientras la sesión
-        // sigue activa (sessionStorage no se borró, pero el navegador sí
-        // tiró la conexión). startBTWatcher() es idempotente, así que no
-        // hay riesgo de engancharlo dos veces.
+        // api.js llama a este handler en cuanto CUALQUIER request protegido
+        // regresa LICENSE_EXPIRED / ACCOUNT_CANCELLED / ACCOUNT_NOT_FOUND.
+        setLicenseBlockedHandler((code, message) => {
+            setLicenseBlock({ code, message });
+        });
+
+        // ── Watcher de reconexión BT (visibilitychange) ─────────────────
         startBTWatcher();
 
         const savedToken   = sessionStorage.getItem('numa_token');
@@ -30,7 +36,6 @@ export function AuthProvider({ children }) {
             setUser(JSON.parse(savedUser));
             setTenant(JSON.parse(savedTenant));
             if (savedLicense) setLicense(JSON.parse(savedLicense));
-            // Si ya había sesión activa (recarga de página), reconectar también
             reconnectBTPrinters();
         }
         setLoading(false);
@@ -41,13 +46,13 @@ export function AuthProvider({ children }) {
         setUser(data.user);
         setTenant(data.tenant);
         if (data.license) setLicense(data.license);
+        setLicenseBlock(null); // sesión nueva: limpia cualquier bloqueo previo
 
         sessionStorage.setItem('numa_token', data.token);
         sessionStorage.setItem('numa_user',    JSON.stringify(data.user));
         sessionStorage.setItem('numa_tenant',  JSON.stringify(data.tenant));
         if (data.license) sessionStorage.setItem('numa_license', JSON.stringify(data.license));
 
-        // Reconectar impresora BT tras login o registro
         reconnectBTPrinters();
     };
 
@@ -68,6 +73,7 @@ export function AuthProvider({ children }) {
         setUser(null);
         setTenant(null);
         setLicense(null);
+        setLicenseBlock(null);
         sessionStorage.removeItem('numa_token');
         sessionStorage.removeItem('numa_user');
         sessionStorage.removeItem('numa_tenant');
@@ -83,6 +89,15 @@ export function AuthProvider({ children }) {
     return (
         <AuthContext.Provider value={value}>
             {children}
+
+            {licenseBlock && (
+                <LicenseExpiredModal
+                    code={licenseBlock.code}
+                    message={licenseBlock.message}
+                    tenantName={tenant?.name}
+                    onLogout={logout}
+                />
+            )}
         </AuthContext.Provider>
     );
 }

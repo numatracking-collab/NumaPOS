@@ -321,7 +321,7 @@ export default function SignUpPage() {
 
                 {/* Footer */}
                 <p className="text-center text-[12px] text-outline mt-[24px]">
-                    © 2026 NUMA POS — Powered by NUMA
+                    © 2026 NUMA POS — Powered by NUMA SYSTEMS. Todos los derechos reservados.
                 </p>
             </div>
         </div>

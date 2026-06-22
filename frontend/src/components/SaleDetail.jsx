@@ -4,6 +4,8 @@
    • Modal de cancelación extraído a CancelSaleModal.jsx
    • Imágenes de productos desde Cloudinary con fallback
    • Etiqueta visual de venta cancelada
+   • Resumen de totales: subtotal, promociones aplicadas, descuento y total
+     (se eliminó la sección de impuestos)
    • Accesibilidad mejorada para adultos no técnicos
 ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -16,6 +18,18 @@ import {
     fmtDate, fmtTime, fmtMoney,
     METHOD_LABEL, METHOD_COLOR,
 } from './history/utils';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Etiquetas de respaldo por tipo de oferta, usadas solo si el item no
+   trae offer_name (p. ej. la oferta fue renombrada o no tiene nombre).
+───────────────────────────────────────────────────────────────────────── */
+const OFFER_TYPE_LABEL = {
+    '2x1':       '2 × 1',
+    '3x2':       '3 × 2',
+    'nxm':       'Compra y llévate',
+    'mitad':     '½ Precio',
+    'descuento': 'Descuento %',
+};
 
 /* ─────────────────────────────────────────────────────────────────────────
    Componente principal
@@ -40,6 +54,32 @@ export default function SaleDetail({
     const [cancelError,     setCancelError]     = useState('');
 
     const isCancelled = sale?.status === 'cancelled';
+
+    // ── Subtotal, promociones y descuento ────────────────────────────────
+    // Subtotal = suma de (precio unitario × cantidad) SIN descuento, por item.
+    const itemsSubtotal = items.reduce(
+        (sum, it) => sum + parseFloat(it.unit_price || 0) * parseFloat(it.quantity || 0),
+        0
+    );
+
+    // Agrupa el descuento por oferta (puede haber 2 o más ofertas distintas
+    // aplicadas a distintos productos dentro de la misma venta).
+    const offersMap = new Map();
+    items.forEach(it => {
+        if (!it.offer_id) return;
+        const amount = parseFloat(it.discount_amount || 0);
+        if (amount <= 0) return;
+
+        const label = it.offer_name?.trim() || OFFER_TYPE_LABEL[it.offer_type] || 'Promoción';
+        const existing = offersMap.get(it.offer_id);
+        if (existing) {
+            existing.amount += amount;
+        } else {
+            offersMap.set(it.offer_id, { name: label, amount });
+        }
+    });
+    const appliedOffers  = [...offersMap.values()];
+    const totalDiscount  = appliedOffers.reduce((sum, o) => sum + o.amount, 0);
 
     // ── Reimprimir ticket ─────────────────────────────────────────────────
     const handleReprint = async () => {
@@ -357,6 +397,12 @@ export default function SaleDetail({
                                             {' × '}
                                             {fmtMoney(item.unit_price)}
                                         </p>
+                                        {parseFloat(item.discount_amount || 0) > 0 && (
+                                            <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">
+                                                {item.offer_name?.trim() || OFFER_TYPE_LABEL[item.offer_type] || 'Promoción'}
+                                                {' · '}-{fmtMoney(item.discount_amount)}
+                                            </p>
+                                        )}
                                     </div>
 
                                     {/* Subtotal */}
@@ -382,12 +428,26 @@ export default function SaleDetail({
 
                         <div className="flex justify-between text-[14px] text-on-surface-variant">
                             <span>Subtotal</span>
-                            <span>{fmtMoney(sale.total_amount)}</span>
+                            <span>{fmtMoney(itemsSubtotal)}</span>
                         </div>
-                        <div className="flex justify-between text-[14px] text-on-surface-variant">
-                            <span>Impuesto</span>
-                            <span>{fmtMoney(sale.tax_amount)}</span>
-                        </div>
+
+                        {appliedOffers.length > 0 && (
+                            <div className="flex items-start justify-between gap-3 text-[14px]">
+                                <span className="text-on-surface-variant shrink-0">
+                                    {appliedOffers.length === 1 ? 'Promoción aplicada' : 'Promociones aplicadas'}
+                                </span>
+                                <span className="text-on-surface font-semibold text-right">
+                                    {appliedOffers.map(o => o.name).join(', ')}
+                                </span>
+                            </div>
+                        )}
+
+                        {totalDiscount > 0 && (
+                            <div className="flex justify-between text-[14px] text-emerald-600 font-semibold">
+                                <span>Descuento aplicado</span>
+                                <span>-{fmtMoney(totalDiscount)}</span>
+                            </div>
+                        )}
 
                         <div className="border-t border-outline-variant/20 pt-2.5 mt-1 flex justify-between items-baseline">
                             <span className="text-[15px] font-bold text-on-surface">Total</span>

@@ -23,6 +23,21 @@ function toQS(params = {}) {
     return new URLSearchParams(clean).toString();
 }
 
+/* ── Bloqueo por licencia vencida / cuenta cancelada ─────────────────────
+   El backend responde 403 con un `code` (LICENSE_EXPIRED, ACCOUNT_CANCELLED,
+   ACCOUNT_NOT_FOUND) en CUALQUIER endpoint protegido cuando la licencia ya
+   no es válida. Como puede pasar en cualquier request de cualquier página,
+   centralizamos la detección aquí en vez de revisarlo en cada componente.
+   AuthContext se suscribe a este handler para mostrar el modal global.
+───────────────────────────────────────────────────────────────────────── */
+let licenseBlockedHandler = null;
+
+export function setLicenseBlockedHandler(fn) {
+    licenseBlockedHandler = fn;
+}
+
+const LICENSE_BLOCK_CODES = ['LICENSE_EXPIRED', 'ACCOUNT_CANCELLED', 'ACCOUNT_NOT_FOUND'];
+
 async function request(method, path, body) {
     const res = await fetch(`${API_URL}${path}`, {
         method,
@@ -31,84 +46,96 @@ async function request(method, path, body) {
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || err.message || `Error ${res.status}`);
+
+        if (err.code && LICENSE_BLOCK_CODES.includes(err.code) && licenseBlockedHandler) {
+            licenseBlockedHandler(err.code, err.error);
+        }
+
+        const error = new Error(err.error || err.message || `Error ${res.status}`);
+        error.code = err.code;
+        throw error;
     }
     return res.json();
 }
 
 /* ── Autenticación ───────────────────────────────────────────────────── */
 export const authService = {
-    login:   (body) => request('POST', '/auth/login', body),
-    logout:  ()     => request('POST', '/auth/logout'),
-    getUser: ()     => request('GET',  '/auth/me'),
+    login: (body) => request('POST', '/auth/login', body),
+    logout: () => request('POST', '/auth/logout'),
+    getUser: () => request('GET', '/auth/me'),
 };
 
 /* ── Ventas ──────────────────────────────────────────────────────────── */
 export const salesService = {
-    list:   (params)         => request('GET',  `/sales?${toQS(params)}`),
-    get:    (id)             => request('GET',  `/sales/${id}`),
-    create: (body)           => request('POST', '/sales', body),
+    list: (params) => request('GET', `/sales?${toQS(params)}`),
+    get: (id) => request('GET', `/sales/${id}`),
+    create: (body) => request('POST', '/sales', body),
     cancel: (id, reason = '') => request('POST', `/sales/${id}/cancel`, { reason }),
 };
 
 /* ── Inventario / Productos ──────────────────────────────────────────── */
 export const inventoryService = {
-    getAll:            (params)     => request('GET',    `/products?${toQS(params)}`),
-    get:               (id)         => request('GET',    `/products/${id}`),
-    create:            (body)       => request('POST',   '/products', body),
-    update:            (id, b)      => request('PUT',    `/products/${id}`, b),
-    delete:            (id)         => request('DELETE', `/products/${id}`),
-    getAllAdjustments:  (params)     => request('GET',    `/inventory/adjustments?${toQS(params)}`),
-    getProductHistory: (productId)  => request('GET',    `/inventory/adjustments/${productId}`),
-    createAdjustment:  (body)       => request('POST',   '/inventory/adjust', body),
+    getAll: (params) => request('GET', `/products?${toQS(params)}`),
+    get: (id) => request('GET', `/products/${id}`),
+    create: (body) => request('POST', '/products', body),
+    update: (id, b) => request('PUT', `/products/${id}`, b),
+    delete: (id) => request('DELETE', `/products/${id}`),
+    getAllAdjustments: (params) => request('GET', `/inventory/adjustments?${toQS(params)}`),
+    getProductHistory: (productId) => request('GET', `/inventory/adjustments/${productId}`),
+    createAdjustment: (body) => request('POST', '/inventory/adjust', body),
 };
 
 /* ── Cajas ───────────────────────────────────────────────────────────── */
 export const cajasService = {
     // Cajas físicas
-    getAll:  ()      => request('GET',    '/cash-registers/cajas'),
-    get:     (id)    => request('GET',    `/cash-registers/cajas/${id}`),
-    create:  (body)  => request('POST',   '/cash-registers/cajas', body),
-    update:  (id, b) => request('PUT',    `/cash-registers/cajas/${id}`, b),
-    delete:  (id)    => request('DELETE', `/cash-registers/cajas/${id}`),
+    getAll: () => request('GET', '/cash-registers/cajas'),
+    get: (id) => request('GET', `/cash-registers/cajas/${id}`),
+    create: (body) => request('POST', '/cash-registers/cajas', body),
+    update: (id, b) => request('PUT', `/cash-registers/cajas/${id}`, b),
+    delete: (id) => request('DELETE', `/cash-registers/cajas/${id}`),
 
     // Movimientos de caja (entradas y salidas manuales)
-    createMovement: (body)    => request('POST', '/cash-registers/movements', body),
-    getMovements:   (cajaId)  => request('GET',  `/cash-registers/movements?caja_id=${cajaId}`),
+    createMovement: (body) => request('POST', '/cash-registers/movements', body),
+    getMovements: (cajaId) => request('GET', `/cash-registers/movements?caja_id=${cajaId}`),
 
     // Cortes
-    createCorte: (body)    => request('POST', '/cash-registers/corte', body),
-    getCortes:   ()        => request('GET',  '/cash-registers/cortes'),
-    getPreview:  (cajaId)  => request('GET',  `/cash-registers/preview?caja_id=${cajaId}`),
+    createCorte: (body) => request('POST', '/cash-registers/corte', body),
+    getCortes: () => request('GET', '/cash-registers/cortes'),
+    getPreview: (cajaId) => request('GET', `/cash-registers/preview?caja_id=${cajaId}`),
+    // Cortes
+    createCorte: (body) => request('POST', '/cash-registers/corte', body),
+    getCortes: () => request('GET', '/cash-registers/cortes'),
+    getPreview: (cajaId) => request('GET', `/cash-registers/preview?caja_id=${cajaId}`),
+    getCorteDetail: (corteId) => request('GET', `/cash-registers/cortes/${corteId}/detail`),
 };
 
 /* ── Series de facturación ───────────────────────────────────────────── */
 export const seriesService = {
-    getAll:     ()      => request('GET',    '/invoice-series'),
-    get:        (id)    => request('GET',    `/invoice-series/${id}`),
-    create:     (body)  => request('POST',   '/invoice-series', body),
-    update:     (id, b) => request('PUT',    `/invoice-series/${id}`, b),
-    delete:     (id)    => request('DELETE', `/invoice-series/${id}`),
-    setDefault: (id)    => request('POST',   `/invoice-series/${id}/default`),
+    getAll: () => request('GET', '/invoice-series'),
+    get: (id) => request('GET', `/invoice-series/${id}`),
+    create: (body) => request('POST', '/invoice-series', body),
+    update: (id, b) => request('PUT', `/invoice-series/${id}`, b),
+    delete: (id) => request('DELETE', `/invoice-series/${id}`),
+    setDefault: (id) => request('POST', `/invoice-series/${id}/default`),
 };
 
 export const invoiceSeriesService = seriesService;
 
 /* ── Categorías ──────────────────────────────────────────────────────── */
 export const categoryService = {
-    getAll: (params) => request('GET',    `/categories?${toQS(params)}`),
-    get:    (id)     => request('GET',    `/categories/${id}`),
-    create: (body)   => request('POST',   '/categories', body),
-    update: (id, b)  => request('PUT',    `/categories/${id}`, b),
-    delete: (id)     => request('DELETE', `/categories/${id}`),
+    getAll: (params) => request('GET', `/categories?${toQS(params)}`),
+    get: (id) => request('GET', `/categories/${id}`),
+    create: (body) => request('POST', '/categories', body),
+    update: (id, b) => request('PUT', `/categories/${id}`, b),
+    delete: (id) => request('DELETE', `/categories/${id}`),
 };
 
 /* ── Ofertas de marketing ────────────────────────────────────────────── */
 export const offersService = {
-    getAll:    (params)     => request('GET',    `/offers?${toQS(params)}`),
-    get:       (id)         => request('GET',    `/offers/${id}`),
-    create:    (body)       => request('POST',   '/offers', body),
-    update:    (id, body)   => request('PUT',    `/offers/${id}`, body),
-    setStatus: (id, status) => request('PATCH',  `/offers/${id}/status`, { status }),
-    delete:    (id)         => request('DELETE', `/offers/${id}`),
+    getAll: (params) => request('GET', `/offers?${toQS(params)}`),
+    get: (id) => request('GET', `/offers/${id}`),
+    create: (body) => request('POST', '/offers', body),
+    update: (id, body) => request('PUT', `/offers/${id}`, body),
+    setStatus: (id, status) => request('PATCH', `/offers/${id}/status`, { status }),
+    delete: (id) => request('DELETE', `/offers/${id}`),
 };

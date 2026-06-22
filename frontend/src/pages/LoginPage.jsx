@@ -163,7 +163,7 @@ export default function LoginPage() {
 
                 {/* Footer */}
                 <p className="text-center text-[12px] text-outline mt-lg">
-                    © 2026 NUMA POS — Powered by NUMA
+                    © 2026 NUMA POS — Powered by NUMA SYSTEMS. Todos los derechos reservados.
                 </p>
             </div>
         </div>
