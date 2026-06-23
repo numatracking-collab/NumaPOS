@@ -66,11 +66,11 @@ async function request(method, path, body) {
 
 /* ── Autenticación ───────────────────────────────────────────────────── */
 export const authService = {
-    login: (body) => request('POST', '/auth/login', body),
-    logout: () => request('POST', '/auth/logout'),
-    getUser: () => request('GET', '/auth/me'),
+    register: (body) => request('POST', '/auth/register', body),
+    login:    (body) => request('POST', '/auth/login', body),
+    logout:   ()     => request('POST', '/auth/logout'),
+    getUser:  ()     => request('GET',  '/auth/me'),
 };
-
 /* ── Ventas ──────────────────────────────────────────────────────────── */
 export const salesService = {
     list: (params) => request('GET', `/sales?${toQS(params)}`),

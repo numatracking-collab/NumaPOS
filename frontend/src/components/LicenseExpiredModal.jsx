@@ -4,39 +4,39 @@ const WHATSAPP_NUMBER = '523326378746';
 
 const MESSAGES = {
     LICENSE_EXPIRED: {
-        icon:    'schedule',
-        title:   'Tu licencia ha vencido',
-        body:    'Para seguir usando NUMA POS, renueva tu plan. Contáctanos con ventas por WhatsApp y te ayudamos al instante.',
-        cta:     'Contactar a ventas',
-        waText:  (name, key) => `Hola, quiero renovar mi licencia de NUMA POS${name ? ` para ${name}` : ''}${key ? ` (Licencia: ${key})` : ''}.`,
+        icon: 'schedule',
+        title: 'Tu licencia ha vencido',
+        body: 'Para seguir usando NUMA POS, renueva tu plan. Contáctanos con ventas por WhatsApp y te ayudamos al instante.',
+        cta: 'Contactar a ventas',
+        waText: (name, key) => `Hola, quiero renovar mi licencia de NUMA POS${name ? ` para ${name}` : ''}${key ? ` (Licencia: ${key})` : ''}.`,
     },
     LICENSE_SUSPENDED: {
-        icon:    'pause_circle',
-        title:   'Tu licencia está suspendida',
-        body:    'Tu acceso ha sido suspendido temporalmente. Contáctanos con soporte para resolverlo.',
-        cta:     'Contactar a soporte',
-        waText:  (name, key) => `Hola, mi licencia de NUMA POS${name ? ` (${name})` : ''}${key ? ` con clave ${key}` : ''} está suspendida y necesito ayuda.`,
+        icon: 'pause_circle',
+        title: 'Tu licencia está suspendida',
+        body: 'Tu acceso ha sido suspendido temporalmente. Contáctanos con soporte para resolverlo.',
+        cta: 'Contactar a soporte',
+        waText: (name, key) => `Hola, mi licencia de NUMA POS${name ? ` (${name})` : ''}${key ? ` con clave ${key}` : ''} está suspendida y necesito ayuda.`,
     },
     LICENSE_CANCELLED: {
-        icon:    'cancel',
-        title:   'Tu licencia fue cancelada',
-        body:    'Tu licencia ha sido cancelada. Contáctanos con soporte si crees que esto es un error.',
-        cta:     'Contactar a soporte',
-        waText:  (name, key) => `Hola, mi licencia de NUMA POS${name ? ` (${name})` : ''}${key ? ` con clave ${key}` : ''} fue cancelada y necesito soporte.`,
+        icon: 'cancel',
+        title: 'Tu licencia fue cancelada',
+        body: 'Tu licencia ha sido cancelada. Contáctanos con soporte si crees que esto es un error.',
+        cta: 'Contactar a soporte',
+        waText: (name, key) => `Hola, mi licencia de NUMA POS${name ? ` (${name})` : ''}${key ? ` con clave ${key}` : ''} fue cancelada y necesito soporte.`,
     },
     ACCOUNT_CANCELLED: {
-        icon:    'block',
-        title:   'Tu cuenta está cancelada',
-        body:    'Tu cuenta ha sido cancelada. Contáctanos con soporte si crees que esto es un error.',
-        cta:     'Contactar a soporte',
-        waText:  (name, key) => `Hola, mi cuenta de NUMA POS${name ? ` (${name})` : ''}${key ? ` con licencia ${key}` : ''} está cancelada y necesito soporte.`,
+        icon: 'block',
+        title: 'Tu cuenta está cancelada',
+        body: 'Tu cuenta ha sido cancelada. Contáctanos con soporte si crees que esto es un error.',
+        cta: 'Contactar a soporte',
+        waText: (name, key) => `Hola, mi cuenta de NUMA POS${name ? ` (${name})` : ''}${key ? ` con licencia ${key}` : ''} está cancelada y necesito soporte.`,
     },
     ACCOUNT_NOT_FOUND: {
-        icon:    'error',
-        title:   'No encontramos tu cuenta',
-        body:    'Hubo un problema con tu cuenta. Contáctanos con soporte para resolverlo.',
-        cta:     'Contactar a soporte',
-        waText:  (name, key) => `Hola, tengo un problema con mi cuenta de NUMA POS${name ? ` (${name})` : ''}${key ? ` y licencia ${key}` : ''} y necesito ayuda.`,
+        icon: 'error',
+        title: 'No encontramos tu cuenta',
+        body: 'Hubo un problema con tu cuenta. Contáctanos con soporte para resolverlo.',
+        cta: 'Contactar a soporte',
+        waText: (name, key) => `Hola, tengo un problema con mi cuenta de NUMA POS${name ? ` (${name})` : ''}${key ? ` y licencia ${key}` : ''} y necesito ayuda.`,
     },
 };
 
@@ -51,10 +51,8 @@ export default function LicenseExpiredModal({ code, message, tenantName, license
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="license-modal-title"
-            className="fixed inset-0 z-[999] bg-on-surface/60 backdrop-blur-sm flex items-center justify-center p-4"
-        >
-            <div className="bg-surface-bright rounded-3xl shadow-2xl max-w-sm w-full p-6 flex flex-col items-center text-center gap-4">
-
+style={{ position: 'fixed', inset: 0, zIndex: 999, backgroundColor: 'rgba(11,28,48,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}        >
+            <div className="bg-surface-bright rounded-3xl shadow-2xl p-6 flex flex-col items-center text-center gap-4" style={{ width: '100%', maxWidth: '380px' }}>
                 <div className="w-16 h-16 rounded-full bg-error/10 flex items-center justify-center">
                     <span className="material-symbols-outlined text-[32px] text-error" aria-hidden="true">
                         {content.icon}
