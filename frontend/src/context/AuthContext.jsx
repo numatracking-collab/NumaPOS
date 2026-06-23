@@ -6,10 +6,10 @@ import LicenseExpiredModal from '../components/LicenseExpiredModal';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-    const [user,    setUser]    = useState(null);
-    const [tenant,  setTenant]  = useState(null);
+    const [user, setUser] = useState(null);
+    const [tenant, setTenant] = useState(null);
     const [license, setLicense] = useState(null);
-    const [token,   setToken]   = useState(null);
+    const [token, setToken] = useState(null);
     const [loading, setLoading] = useState(true);
 
     // ── Bloqueo por licencia vencida / cuenta cancelada ─────────────────
@@ -26,9 +26,9 @@ export function AuthProvider({ children }) {
         // ── Watcher de reconexión BT (visibilitychange) ─────────────────
         startBTWatcher();
 
-        const savedToken   = sessionStorage.getItem('numa_token');
-        const savedUser    = sessionStorage.getItem('numa_user');
-        const savedTenant  = sessionStorage.getItem('numa_tenant');
+        const savedToken = sessionStorage.getItem('numa_token');
+        const savedUser = sessionStorage.getItem('numa_user');
+        const savedTenant = sessionStorage.getItem('numa_tenant');
         const savedLicense = sessionStorage.getItem('numa_license');
 
         if (savedToken && savedUser && savedTenant) {
@@ -49,8 +49,8 @@ export function AuthProvider({ children }) {
         setLicenseBlock(null); // sesión nueva: limpia cualquier bloqueo previo
 
         sessionStorage.setItem('numa_token', data.token);
-        sessionStorage.setItem('numa_user',    JSON.stringify(data.user));
-        sessionStorage.setItem('numa_tenant',  JSON.stringify(data.tenant));
+        sessionStorage.setItem('numa_user', JSON.stringify(data.user));
+        sessionStorage.setItem('numa_tenant', JSON.stringify(data.tenant));
         if (data.license) sessionStorage.setItem('numa_license', JSON.stringify(data.license));
 
         reconnectBTPrinters();
@@ -95,6 +95,7 @@ export function AuthProvider({ children }) {
                     code={licenseBlock.code}
                     message={licenseBlock.message}
                     tenantName={tenant?.name}
+                    licenseKey={license?.key}
                     onLogout={logout}
                 />
             )}

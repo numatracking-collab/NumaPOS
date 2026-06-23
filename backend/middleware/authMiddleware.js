@@ -4,18 +4,13 @@ import { pool } from '../config/db.js';
 
 dotenv.config();
 
-/**
- * Middleware de autenticación JWT.
- * 1. Verifica el token enviado en el header Authorization.
- * 2. Inyecta req.user con { tenantId, userId, email, role }.
- * 3. Valida que la licencia del tenant esté vigente y que el tenant
- *    no esté cancelado. Se revisa en CADA request (bloqueo instantáneo,
- *    no solo al iniciar sesión) — así si la licencia vence mientras el
- *    cajero ya tiene sesión abierta, se corta el acceso de inmediato.
- *
- * Si la licencia no es válida, responde 403 con un `code` específico
- * (LICENSE_EXPIRED | ACCOUNT_CANCELLED | ACCOUNT_NOT_FOUND) para que el
- * frontend sepa mostrar el modal de renovación en vez de un error genérico.
+/*
+ * Códigos de bloqueo:
+ *   LICENSE_EXPIRED    → vencida por fecha          → "contacta a ventas"
+ *   LICENSE_SUSPENDED  → suspendida manualmente      → "contacta a soporte"
+ *   LICENSE_CANCELLED  → cancelada manualmente       → "contacta a soporte"
+ *   ACCOUNT_CANCELLED  → tenant.status = cancelado   → "contacta a soporte"
+ *   ACCOUNT_NOT_FOUND  → tenant no existe en la DB   → genérico
  */
 export const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -35,12 +30,11 @@ export const verifyToken = async (req, res, next) => {
 
     req.user = {
         tenantId: decoded.tenantId,
-        userId: decoded.userId,
-        email: decoded.email,
-        role: decoded.role,
+        userId:   decoded.userId,
+        email:    decoded.email,
+        role:     decoded.role,
     };
 
-    // ── Validación de licencia ──────────────────────────────────────────
     try {
         const result = await pool.query(
             `SELECT t.status   AS tenant_status,
@@ -59,24 +53,40 @@ export const verifyToken = async (req, res, next) => {
         if (!row) {
             return res.status(403).json({
                 error: 'No se encontró información de tu cuenta.',
-                code: 'ACCOUNT_NOT_FOUND',
+                code:  'ACCOUNT_NOT_FOUND',
             });
         }
 
+        // ── Tenant cancelado a nivel de cuenta ───────────────────────────
         if (row.tenant_status === 'cancelado') {
             return res.status(403).json({
-                error: 'Tu cuenta ha sido cancelada. Contáctanos para reactivarla.',
-                code: 'ACCOUNT_CANCELLED',
+                error: 'Tu cuenta ha sido cancelada. Contacta a soporte para reactivarla.',
+                code:  'ACCOUNT_CANCELLED',
             });
         }
 
-        const isLicenceCancelled = row.licence_status === 'cancelled';
-        const isLicenceExpired   = !row.expires_at || new Date(row.expires_at) < new Date();
-
-        if (isLicenceCancelled || isLicenceExpired) {
+        // ── Licencia suspendida ───────────────────────────────────────────
+        if (row.licence_status === 'suspended') {
             return res.status(403).json({
-                error: 'Tu licencia ha vencido. Renueva tu plan para seguir usando NUMA POS.',
-                code: 'LICENSE_EXPIRED',
+                error: 'Tu licencia está suspendida. Contacta a soporte para resolverlo.',
+                code:  'LICENSE_SUSPENDED',
+            });
+        }
+
+        // ── Licencia cancelada manualmente ────────────────────────────────
+        if (row.licence_status === 'cancelled') {
+            return res.status(403).json({
+                error: 'Tu licencia ha sido cancelada. Contacta a soporte para reactivarla.',
+                code:  'LICENSE_CANCELLED',
+            });
+        }
+
+        // ── Licencia vencida por fecha ────────────────────────────────────
+        const isExpired = !row.expires_at || new Date(row.expires_at) < new Date();
+        if (isExpired) {
+            return res.status(403).json({
+                error: 'Tu licencia ha vencido. Contacta a ventas para renovar tu plan.',
+                code:  'LICENSE_EXPIRED',
             });
         }
 

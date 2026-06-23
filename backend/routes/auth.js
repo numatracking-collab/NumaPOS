@@ -13,10 +13,14 @@ const SALT_ROUNDS = 12;
 /**
  * Genera una licencia con formato NUMA-XXXX-XXXX-XXXX
  */
+// ── Reemplaza la función generateLicenseKey completa ─────────────────────
 function generateLicenseKey() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    const segment = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    return `NUMA-${segment()}-${segment()}-${segment()}`;
+    const segment = (n) => Array.from(
+        { length: n },
+        () => chars[Math.floor(Math.random() * chars.length)]
+    ).join('');
+    return `${segment(5)}-${segment(5)}`;  // Ej: A1B2D-C3D4T
 }
 
 /**
@@ -62,9 +66,15 @@ router.post('/register', async (req, res) => {
         const tenant = tenantResult.rows[0];
 
         // 3. Crear la licencia (plan free, activa, expira en 30 días)
+        // ── Reemplaza el INSERT de licencia (paso 3 del register) ────────────────
         const licenseKey = generateLicenseKey();
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + 7);
+
+        await query(
+            'INSERT INTO licences (tenant_id, plan_type, status, expires_at, key) VALUES ($1, $2, $3, $4, $5)',
+            [tenant.id, 'free', 'active', expiresAt.toISOString(), licenseKey]
+        );
 
         await query(
             'INSERT INTO licences (tenant_id, plan_type, status, expires_at) VALUES ($1, $2, $3, $4)',

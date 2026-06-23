@@ -36,7 +36,13 @@ export function setLicenseBlockedHandler(fn) {
     licenseBlockedHandler = fn;
 }
 
-const LICENSE_BLOCK_CODES = ['LICENSE_EXPIRED', 'ACCOUNT_CANCELLED', 'ACCOUNT_NOT_FOUND'];
+const LICENSE_BLOCK_CODES = [
+    'LICENSE_EXPIRED',
+    'LICENSE_SUSPENDED',
+    'LICENSE_CANCELLED',
+    'ACCOUNT_CANCELLED',
+    'ACCOUNT_NOT_FOUND',
+];
 
 async function request(method, path, body) {
     const res = await fetch(`${API_URL}${path}`, {

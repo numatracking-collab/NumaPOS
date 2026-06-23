@@ -2,28 +2,47 @@ const WHATSAPP_NUMBER = '523326378746';
 
 const MESSAGES = {
     LICENSE_EXPIRED: {
-        icon:  'schedule',
-        title: 'Tu licencia ha vencido',
-        body:  'Para seguir usando NUMA POS, renueva tu plan. Contáctanos por WhatsApp y te ayudamos al instante.',
+        icon:    'schedule',
+        title:   'Tu licencia ha vencido',
+        body:    'Para seguir usando NUMA POS, renueva tu plan. Contáctanos con ventas por WhatsApp y te ayudamos al instante.',
+        cta:     'Contactar a ventas',
+        waText:  (name, key) => `Hola, quiero renovar mi licencia de NUMA POS${name ? ` para ${name}` : ''}${key ? ` (Licencia: ${key})` : ''}.`,
+    },
+    LICENSE_SUSPENDED: {
+        icon:    'pause_circle',
+        title:   'Tu licencia está suspendida',
+        body:    'Tu acceso ha sido suspendido temporalmente. Contáctanos con soporte para resolverlo.',
+        cta:     'Contactar a soporte',
+        waText:  (name, key) => `Hola, mi licencia de NUMA POS${name ? ` (${name})` : ''}${key ? ` con clave ${key}` : ''} está suspendida y necesito ayuda.`,
+    },
+    LICENSE_CANCELLED: {
+        icon:    'cancel',
+        title:   'Tu licencia fue cancelada',
+        body:    'Tu licencia ha sido cancelada. Contáctanos con soporte si crees que esto es un error.',
+        cta:     'Contactar a soporte',
+        waText:  (name, key) => `Hola, mi licencia de NUMA POS${name ? ` (${name})` : ''}${key ? ` con clave ${key}` : ''} fue cancelada y necesito soporte.`,
     },
     ACCOUNT_CANCELLED: {
-        icon:  'block',
-        title: 'Tu cuenta está cancelada',
-        body:  'Si crees que esto es un error o quieres reactivar tu cuenta, contáctanos.',
+        icon:    'block',
+        title:   'Tu cuenta está cancelada',
+        body:    'Tu cuenta ha sido cancelada. Contáctanos con soporte si crees que esto es un error.',
+        cta:     'Contactar a soporte',
+        waText:  (name, key) => `Hola, mi cuenta de NUMA POS${name ? ` (${name})` : ''}${key ? ` con licencia ${key}` : ''} está cancelada y necesito soporte.`,
     },
     ACCOUNT_NOT_FOUND: {
-        icon:  'error',
-        title: 'No encontramos tu cuenta',
-        body:  'Hubo un problema con tu cuenta. Contáctanos para resolverlo.',
+        icon:    'error',
+        title:   'No encontramos tu cuenta',
+        body:    'Hubo un problema con tu cuenta. Contáctanos con soporte para resolverlo.',
+        cta:     'Contactar a soporte',
+        waText:  (name, key) => `Hola, tengo un problema con mi cuenta de NUMA POS${name ? ` (${name})` : ''}${key ? ` y licencia ${key}` : ''} y necesito ayuda.`,
     },
 };
 
-export default function LicenseExpiredModal({ code, message, tenantName, onLogout }) {
+export default function LicenseExpiredModal({ code, message, tenantName, licenseKey, onLogout }) {
     const content = MESSAGES[code] || MESSAGES.LICENSE_EXPIRED;
 
-    const waText = encodeURIComponent(
-        `Hola, quiero renovar mi licencia de NUMA POS${tenantName ? ` para ${tenantName}` : ''}.`
-    );
+    // Se envían tanto el nombre del negocio como la clave de licencia al generador de texto
+    const waText = encodeURIComponent(content.waText(tenantName, licenseKey));
     const waLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${waText}`;
 
     return (
@@ -50,7 +69,25 @@ export default function LicenseExpiredModal({ code, message, tenantName, onLogou
                     </p>
                 </div>
 
-                {/* AQUÍ SE CORRIGIÓ: Se añadió la etiqueta de apertura <a */}
+                {/* Info de la Licencia y Negocio */}
+                {(tenantName || licenseKey) && (
+                    <div className="w-full bg-surface-container-low rounded-2xl border border-outline-variant/30 px-4 py-3 flex flex-col gap-1.5">
+                        {tenantName && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-on-surface-variant">Negocio</span>
+                                <span className="text-[12px] font-semibold text-on-surface truncate max-w-[180px]">{tenantName}</span>
+                            </div>
+                        )}
+                        {licenseKey && (
+                            <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-on-surface-variant">Licencia</span>
+                                <span className="font-mono text-[13px] font-black text-on-surface tracking-wider">{licenseKey}</span>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* CORREGIDO: Añadida la etiqueta de apertura <a> que faltaba */}
                 <a
                     href={waLink}
                     target="_blank"
@@ -60,7 +97,7 @@ export default function LicenseExpiredModal({ code, message, tenantName, onLogou
                     <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
                         chat
                     </span>
-                    Renovar por WhatsApp
+                    {content.cta}
                 </a>
 
                 <button
