@@ -149,15 +149,14 @@ router.get('/me', async (req, res) => {
     try {
         const result = await query(
             `SELECT u.id, u.name, u.email, u.role,
-                    t.id AS tenant_id, t.name AS tenant_name,
-                    l.plan_type, l.status AS license_status, l.expires_at
-             FROM users u
-             JOIN tenants t ON u.tenant_id = t.id
-             LEFT JOIN licences l ON l.tenant_id = t.id
-               AND l.status = 'active'
-             WHERE u.id = $1
-             ORDER BY l.created_at DESC
-             LIMIT 1`,
+            t.id AS tenant_id, t.name AS tenant_name,
+            l.plan_type, l.status AS license_status, l.expires_at, l.key AS license_key
+     FROM users u
+     JOIN tenants t ON u.tenant_id = t.id
+     LEFT JOIN licences l ON l.tenant_id = t.id
+     WHERE u.id = $1
+     ORDER BY l.created_at DESC
+     LIMIT 1`,
             [decoded.userId]
         );
 
@@ -181,6 +180,7 @@ router.get('/me', async (req, res) => {
                 plan: row.plan_type,
                 status: row.license_status,
                 expiresAt: row.expires_at,
+                key: row.license_key || null,
             } : null,
         });
     } catch (err) {
@@ -225,12 +225,13 @@ router.post('/login', async (req, res) => {
 
         // 3. Obtener licencia activa del tenant
         const licenceResult = await query(
-            `SELECT plan_type, status, expires_at FROM licences 
-             WHERE tenant_id = $1 AND status = 'active' 
-             ORDER BY created_at DESC LIMIT 1`,
+            `SELECT plan_type, status, expires_at, key FROM licences 
+     WHERE tenant_id = $1
+     ORDER BY created_at DESC LIMIT 1`,
             [row.tenant_id]
         );
 
+        const licence = licenceResult.rows[0] || null;
         const licence = licenceResult.rows[0] || null;
 
         // 4. Generar JWT
@@ -259,7 +260,8 @@ router.post('/login', async (req, res) => {
             license: licence ? {
                 plan: licence.plan_type,
                 status: licence.status,
-                expiresAt: licence.expires_at
+                expiresAt: licence.expires_at,
+                key: licence.key || null,
             } : null
         });
 
