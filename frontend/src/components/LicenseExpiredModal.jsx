@@ -1,3 +1,5 @@
+import ReactDOM from 'react-dom';
+
 const WHATSAPP_NUMBER = '523326378746';
 
 const MESSAGES = {
@@ -41,11 +43,10 @@ const MESSAGES = {
 export default function LicenseExpiredModal({ code, message, tenantName, licenseKey, onLogout }) {
     const content = MESSAGES[code] || MESSAGES.LICENSE_EXPIRED;
 
-    // Se envían tanto el nombre del negocio como la clave de licencia al generador de texto
     const waText = encodeURIComponent(content.waText(tenantName, licenseKey));
     const waLink = `https://wa.me/${WHATSAPP_NUMBER}?text=${waText}`;
 
-    return (
+    return ReactDOM.createPortal(
         <div
             role="alertdialog"
             aria-modal="true"
@@ -87,7 +88,6 @@ export default function LicenseExpiredModal({ code, message, tenantName, license
                     </div>
                 )}
 
-                {/* CORREGIDO: Añadida la etiqueta de apertura <a> que faltaba */}
                 <a
                     href={waLink}
                     target="_blank"
@@ -108,6 +108,7 @@ export default function LicenseExpiredModal({ code, message, tenantName, license
                 </button>
 
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }
