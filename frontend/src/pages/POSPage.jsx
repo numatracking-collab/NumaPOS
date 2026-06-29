@@ -12,13 +12,9 @@ const LS_CART = 'numa_pos_cart';
 // Helpers de oferta
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Devuelve la primera oferta activa que aplica al producto ahora mismo.
- * Verifica: status, producto incluido, día de la semana, horario y fechas.
- */
 function findApplicableOffer(product, offers) {
     const now = new Date();
-    const currentDay = now.getDay();
+    const currentDay  = now.getDay();
     const currentTime = now.toTimeString().slice(0, 5);
     const currentDate = now.toISOString().slice(0, 10);
 
@@ -27,30 +23,17 @@ function findApplicableOffer(product, offers) {
         if (!offer.products?.some(p => p.id === product.id)) return false;
         if (!offer.active_days?.includes(currentDay)) return false;
         if (offer.time_start && currentTime < offer.time_start) return false;
-        if (offer.time_end && currentTime > offer.time_end) return false;
+        if (offer.time_end   && currentTime > offer.time_end)   return false;
         if (offer.date_start && currentDate < offer.date_start) return false;
-        if (offer.date_end && currentDate > offer.date_end) return false;
+        if (offer.date_end   && currentDate > offer.date_end)   return false;
         return true;
     }) ?? null;
 }
 
-/**
- * Aplica la oferta al item del carrito.
- *
- * ⚠️  REGLA CLAVE: item.price NUNCA se modifica.
- *     Siempre refleja el precio de catálogo original de la BD.
- *     El descuento real lo calcula effectiveSubtotal() en TicketSidebar.
- *
- * Tipos de cantidad (2x1, 3x2, nxm): ajusta quantity al mínimo que activa
- *   la promo; las unidades "gratis" se descuentan en effectiveSubtotal().
- *
- * Tipos de precio (mitad, descuento): price queda intacto, appliedOffer
- *   almacena los datos necesarios para que effectiveSubtotal() calcule bien.
- */
 function applyOfferToCart(cart, productId, offer) {
     return cart.map(item => {
         if (item.id !== productId) return item;
-        if (item.appliedOffer?.id === offer.id) return item; // ya aplicada
+        if (item.appliedOffer?.id === offer.id) return item;
 
         switch (offer.type) {
             case '2x1': {
@@ -62,16 +45,15 @@ function applyOfferToCart(cart, productId, offer) {
                 return { ...item, quantity: newQty, appliedOffer: offer };
             }
             case 'nxm': {
-                const buyQ = offer.buy_qty || 1;
-                const getQ = offer.get_qty || 1;
+                const buyQ  = offer.buy_qty || 1;
+                const getQ  = offer.get_qty || 1;
                 const cycle = buyQ + getQ;
-                const sets = Math.max(1, Math.ceil(item.quantity / buyQ));
+                const sets  = Math.max(1, Math.ceil(item.quantity / buyQ));
                 const newQty = sets * cycle;
                 return { ...item, quantity: newQty, appliedOffer: offer };
             }
             case 'mitad':
             case 'descuento':
-                // Sin cambio de price ni quantity
                 return { ...item, appliedOffer: offer };
             default:
                 return item;
@@ -84,16 +66,14 @@ function applyOfferToCart(cart, productId, offer) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function POSPage() {
     const [activeCategory, setActiveCategory] = useState(null);
-    const [products, setProducts] = useState([]);
-    const [offers, setOffers] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [showToast, setShowToast] = useState(false);
-    const [selectedCaja, setSelectedCaja] = useState(null);
-    const [selectedSerie, setSelectedSerie] = useState(null);
-    const [mobileView, setMobileView] = useState('products');
-
-    /** Oferta detectada pendiente de confirmación del cajero */
-    const [pendingOffer, setPendingOffer] = useState(null);
+    const [products,       setProducts]       = useState([]);
+    const [offers,         setOffers]         = useState([]);
+    const [loading,        setLoading]        = useState(true);
+    const [showToast,      setShowToast]      = useState(false);
+    const [selectedCaja,   setSelectedCaja]   = useState(null);
+    const [selectedSerie,  setSelectedSerie]  = useState(null);
+    const [mobileView,     setMobileView]     = useState('products');
+    const [pendingOffer,   setPendingOffer]   = useState(null);
 
     const [cart, setCart] = useState(() => {
         try {
@@ -139,8 +119,6 @@ export default function POSPage() {
         setShowToast(true);
         setTimeout(() => setShowToast(false), 2000);
 
-        // Detectar oferta solo si no hay una pendiente y el producto
-        // todavía no tiene una oferta aplicada.
         const alreadyApplied = cart.some(i => i.id === product.id && i.appliedOffer);
         if (!pendingOffer && !alreadyApplied) {
             const match = findApplicableOffer(product, offers);
@@ -166,6 +144,13 @@ export default function POSPage() {
         );
     };
 
+    // ── Quitar un producto individual del carrito ─────────────────────────────
+    const handleRemoveItem = (itemId) => {
+        setCart(prev => prev.filter(item => item.id !== itemId));
+        // Si la oferta pendiente era para ese producto, la descartamos
+        setPendingOffer(prev => prev?.productId === itemId ? null : prev);
+    };
+
     const handleClearCart = () => {
         setCart([]);
         setPendingOffer(null);
@@ -174,21 +159,22 @@ export default function POSPage() {
 
     const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
-    // DESPUÉS — agregar cajaNombre
     const sidebarProps = {
         cart,
         products,
         onUpdateQuantity: handleUpdateQuantity,
-        onClearCart: handleClearCart,
-        onSaleSuccess: loadProducts,
-        onAddProduct: handleAddProduct,
-        cajaId: selectedCaja?.id ?? null,
-        cajaNombre: selectedCaja?.name ?? '',  // ← agregar
-        serie: selectedSerie,
+        onRemoveItem:     handleRemoveItem,
+        onClearCart:      handleClearCart,
+        onSaleSuccess:    loadProducts,
+        onAddProduct:     handleAddProduct,
+        cajaId:           selectedCaja?.id   ?? null,
+        cajaNombre:       selectedCaja?.name ?? '',
+        serie:            selectedSerie,
         pendingOffer,
-        onApplyOffer: handleApplyOffer,
-        onDismissOffer: handleDismissOffer,
+        onApplyOffer:     handleApplyOffer,
+        onDismissOffer:   handleDismissOffer,
     };
+
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-background">
 
@@ -232,8 +218,8 @@ export default function POSPage() {
                     <button
                         onClick={() => setMobileView('products')}
                         className={`relative flex items-center gap-1.5 px-5 pt-2 pb-2.5 rounded-t-xl font-bold text-[12px] transition-all duration-200 ${mobileView === 'products'
-                                ? 'bg-slate-50 text-secondary shadow-sm z-20'
-                                : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'}`}
+                            ? 'bg-slate-50 text-secondary shadow-sm z-20'
+                            : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'}`}
                         style={{ marginRight: '-2px', clipPath: 'polygon(4px 0%, calc(100% - 4px) 0%, 100% 100%, 0% 100%)' }}
                     >
                         <span className="material-symbols-outlined text-[15px]"
@@ -246,8 +232,8 @@ export default function POSPage() {
                     <button
                         onClick={() => setMobileView('ticket')}
                         className={`relative flex items-center gap-1.5 px-5 pt-2 pb-2.5 rounded-t-xl font-bold text-[12px] transition-all duration-200 ${mobileView === 'ticket'
-                                ? 'bg-white text-secondary shadow-sm z-20'
-                                : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'}`}
+                            ? 'bg-white text-secondary shadow-sm z-20'
+                            : 'bg-slate-300 text-slate-500 z-10 translate-y-0.5 opacity-75'}`}
                         style={{ marginLeft: '-2px', clipPath: 'polygon(4px 0%, calc(100% - 4px) 0%, 100% 100%, 0% 100%)' }}
                     >
                         <span className="material-symbols-outlined text-[15px]"

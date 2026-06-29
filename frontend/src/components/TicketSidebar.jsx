@@ -2,13 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import CheckoutModal from './CheckoutModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// effectiveSubtotal — lo que el cliente realmente paga por esta línea.
-//
-// item.price  = precio original de catálogo (NUNCA se modifica)
-// item.appliedOffer = oferta aplicada, o undefined
-//
-// Para tipos de cantidad (2x1, 3x2, nxm): descuenta las unidades gratis.
-// Para tipos de precio (mitad, descuento): aplica el porcentaje al total.
+// effectiveSubtotal
 // ─────────────────────────────────────────────────────────────────────────────
 export function effectiveSubtotal(item) {
     const full = item.price * item.quantity;
@@ -40,12 +34,10 @@ export function effectiveSubtotal(item) {
     }
 }
 
-// Descuento total en dinero para una línea
 function lineDiscount(item) {
     return parseFloat((item.price * item.quantity - effectiveSubtotal(item)).toFixed(2));
 }
 
-// Etiqueta legible del tipo de oferta
 function offerTypeLabel(offer) {
     switch (offer.type) {
         case '2x1': return '2 × 1';
@@ -111,26 +103,35 @@ function OfferBanner({ pendingOffer, onApply, onDismiss }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CartItem
+// CartItem  — hover/swipe to reveal delete
 // ─────────────────────────────────────────────────────────────────────────────
-function CartItem({ item, onUpdateQuantity }) {
-    const allowFractions = item.allow_fractions ?? false;
-    const unit = item.unit || 'pza.';
-    const step = allowFractions ? 0.1 : 1;
+const SWIPE_THRESHOLD = 52;   // px mínimos para revelar el botón
+const SWIPE_MAX      = 68;   // px máximos que se desplaza la tarjeta
 
-    const [inputVal, setInputVal] = useState(String(item.quantity));
+function CartItem({ item, onUpdateQuantity, onRemove }) {
+    const allowFractions = item.allow_fractions ?? false;
+    const unit           = item.unit || 'pza.';
+    const step           = allowFractions ? 0.1 : 1;
+
+    const [inputVal,   setInputVal]   = useState(String(item.quantity));
+    const [translateX, setTranslateX] = useState(0);   // swipe offset
+    const [revealed,   setRevealed]   = useState(false); // delete visible
+
+    const touchStart  = useRef(null);
+    const touchStartY = useRef(null);
+    const isDragging  = useRef(false);
 
     useEffect(() => {
         setInputVal(allowFractions ? String(item.quantity) : String(Math.floor(item.quantity)));
     }, [item.quantity, allowFractions]);
 
     const clampMin = (v) => Math.max(allowFractions ? 0.01 : 1, v);
-    const round = (v) => allowFractions ? Math.round(v * 1000) / 1000 : Math.floor(v);
+    const round    = (v) => allowFractions ? Math.round(v * 1000) / 1000 : Math.floor(v);
 
     const commitInput = () => {
         const parsed = parseFloat(inputVal);
         if (isNaN(parsed) || parsed <= 0) { setInputVal(String(item.quantity)); return; }
-        const next = clampMin(round(parsed));
+        const next  = clampMin(round(parsed));
         const delta = next - item.quantity;
         if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
         setInputVal(String(next));
@@ -144,7 +145,7 @@ function CartItem({ item, onUpdateQuantity }) {
     };
 
     const handleMinus = () => {
-        const next = clampMin(round(item.quantity - step));
+        const next  = clampMin(round(item.quantity - step));
         const delta = next - item.quantity;
         if (Math.abs(delta) > 0.0001) onUpdateQuantity(item.id, delta);
     };
@@ -154,101 +155,191 @@ function CartItem({ item, onUpdateQuantity }) {
         onUpdateQuantity(item.id, next - item.quantity);
     };
 
-    // ── Valores de display ────────────────────────────────────────────────────
-    const effSubtotal = effectiveSubtotal(item);
+    // ── Touch handlers ────────────────────────────────────────────────────────
+    const onTouchStart = (e) => {
+        touchStart.current  = e.touches[0].clientX;
+        touchStartY.current = e.touches[0].clientY;
+        isDragging.current  = false;
+    };
+
+    const onTouchMove = (e) => {
+        if (touchStart.current === null) return;
+        const dx = e.touches[0].clientX - touchStart.current;
+        const dy = e.touches[0].clientY - touchStartY.current;
+
+        // Si el scroll vertical domina, no interferimos
+        if (!isDragging.current && Math.abs(dy) > Math.abs(dx)) return;
+        isDragging.current = true;
+
+        // Solo swipe izquierda
+        if (dx > 0 && !revealed) return;
+
+        const base   = revealed ? -SWIPE_MAX : 0;
+        const raw    = base + dx;
+        const clamped = Math.max(-SWIPE_MAX, Math.min(0, raw));
+        setTranslateX(clamped);
+    };
+
+    const onTouchEnd = () => {
+        if (!isDragging.current) { touchStart.current = null; return; }
+        // Snap: si pasó el umbral → revelar; si no → cerrar
+        if (translateX < -SWIPE_THRESHOLD) {
+            setTranslateX(-SWIPE_MAX);
+            setRevealed(true);
+        } else {
+            setTranslateX(0);
+            setRevealed(false);
+        }
+        touchStart.current = null;
+    };
+
+    const closeSwipe = () => {
+        setTranslateX(0);
+        setRevealed(false);
+    };
+
+    // ── Display values ────────────────────────────────────────────────────────
+    const effSubtotal  = effectiveSubtotal(item);
     const fullSubtotal = item.price * item.quantity;
-    const disc = lineDiscount(item);
-    const hasOffer = !!item.appliedOffer && disc > 0;
-    const typeLabel = hasOffer ? offerTypeLabel(item.appliedOffer) : null;
+    const disc         = lineDiscount(item);
+    const hasOffer     = !!item.appliedOffer && disc > 0;
+    const typeLabel    = hasOffer ? offerTypeLabel(item.appliedOffer) : null;
 
     return (
-        <div className="flex gap-3 group animate-fade-in">
-            {/* Imagen */}
-            <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
-                {item.images?.[0]?.url || item.image_url ? (
-                    <img className="w-full h-full object-cover"
-                        src={item.images?.[0]?.url || item.image_url} alt={item.name} />
-                ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-300">
-                        <span className="material-symbols-outlined">image</span>
-                    </div>
-                )}
+        /* Wrapper — clips the swipe & shows the red delete zone behind */
+        <div className="relative overflow-hidden rounded-xl group/item animate-fade-in">
+
+            {/* ── Delete zone (behind, always rendered) ── */}
+            <div className="absolute inset-y-0 right-0 w-[68px] flex items-center justify-center bg-error rounded-xl">
+                <button
+                    onClick={() => onRemove(item.id)}
+                    className="flex flex-col items-center gap-0.5 text-white active:scale-90 transition-transform"
+                >
+                    <span className="material-symbols-outlined text-[22px]"
+                        style={{ fontVariationSettings: "'FILL' 1" }}>delete</span>
+                    <span className="text-[9px] font-bold tracking-wide uppercase">Quitar</span>
+                </button>
             </div>
 
-            {/* Contenido */}
-            <div className="flex-1 flex flex-col justify-between min-w-0">
+            {/* ── Card (slides left on swipe / hover reveals delete btn) ── */}
+            <div
+                className="relative bg-white flex gap-3 transition-transform duration-200 ease-out"
+                style={{ transform: `translateX(${translateX}px)` }}
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+            >
+                {/* Imagen */}
+                <div className="w-16 h-16 rounded-lg bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
+                    {item.images?.[0]?.url || item.image_url ? (
+                        <img className="w-full h-full object-cover"
+                            src={item.images?.[0]?.url || item.image_url} alt={item.name} />
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-300">
+                            <span className="material-symbols-outlined">image</span>
+                        </div>
+                    )}
+                </div>
 
-                {/* Nombre + subtotal efectivo */}
-                <div className="flex justify-between gap-2 items-start">
-                    <span className="font-bold text-[13px] text-on-surface truncate leading-tight">
-                        {item.name}
+                {/* Contenido */}
+                <div className="flex-1 flex flex-col justify-between min-w-0">
+
+                    {/* Nombre + subtotal + botón hover-delete */}
+                    <div className="flex justify-between gap-2 items-start">
+                        <span className="font-bold text-[13px] text-on-surface truncate leading-tight">
+                            {item.name}
+                        </span>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                            {/* Botón eliminar — solo visible en hover (desktop) */}
+                            <button
+                                onClick={() => onRemove(item.id)}
+                                title="Quitar del carrito"
+                                className="
+                                    w-6 h-6 flex items-center justify-center rounded-md
+                                    text-outline-variant hover:text-error hover:bg-error-container
+                                    transition-all duration-150
+                                    opacity-0 group-hover/item:opacity-100
+                                    focus:opacity-100
+                                "
+                            >
+                                <span className="material-symbols-outlined text-[15px]">close</span>
+                            </button>
+
+                            <div className="text-right">
+                                <span className="font-bold text-[14px]">${effSubtotal.toFixed(2)}</span>
+                                {hasOffer && (
+                                    <p className="text-[10px] text-on-surface-variant line-through">
+                                        ${fullSubtotal.toFixed(2)}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Precio unitario */}
+                    <span className="text-[10px] text-on-surface-variant">
+                        ${Number(item.price).toFixed(2)} / {unit}
                     </span>
-                    <div className="text-right shrink-0">
-                        <span className="font-bold text-[14px]">${effSubtotal.toFixed(2)}</span>
-                        {/* Tachado del precio completo si hay descuento */}
-                        {hasOffer && (
-                            <p className="text-[10px] text-on-surface-variant line-through">
-                                ${fullSubtotal.toFixed(2)}
-                            </p>
-                        )}
-                    </div>
-                </div>
 
-                {/* Precio unitario */}
-                <span className="text-[10px] text-on-surface-variant">
-                    ${Number(item.price).toFixed(2)} / {unit}
-                </span>
-
-                {/* Badge de oferta aplicada con ahorro */}
-                {hasOffer && (
-                    <div className="flex items-center gap-xs mt-0.5">
-                        <span className="flex items-center gap-0.5 text-[10px] font-bold text-secondary bg-secondary/10 px-1.5 py-0.5 rounded-full">
-                            <span className="material-symbols-outlined text-[11px]"
-                                style={{ fontVariationSettings: "'FILL' 1" }}>local_offer</span>
-                            {typeLabel}
-                        </span>
-                        <span className="text-[10px] text-green-700 font-bold bg-green-50 px-1.5 py-0.5 rounded-full">
-                            Ahorro: ${disc.toFixed(2)}
-                        </span>
-                    </div>
-                )}
-
-                {/* Controles de cantidad */}
-                <div className="flex items-center justify-between mt-1">
-                    <div className={`flex items-center rounded-lg border overflow-hidden ${hasOffer
-                        ? 'border-secondary/40 bg-secondary/5'
-                        : 'border-outline-variant bg-surface-container-low'
-                        }`}>
-                        <button onClick={handleMinus}
-                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0">
-                            <span className="material-symbols-outlined text-sm">remove</span>
-                        </button>
-                        <input
-                            type="text"
-                            inputMode={allowFractions ? 'decimal' : 'numeric'}
-                            value={inputVal}
-                            onChange={e => setInputVal(e.target.value)}
-                            onBlur={commitInput}
-                            onKeyDown={handleKeyDown}
-                            onFocus={e => e.target.select()}
-                            className="w-14 h-8 text-center font-bold text-[13px] bg-transparent focus:outline-none focus:bg-secondary/5 transition-colors"
-                        />
-                        <button onClick={handlePlus}
-                            className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0">
-                            <span className="material-symbols-outlined text-sm">add</span>
-                        </button>
-                    </div>
-
-                    <div className="flex flex-col items-end gap-0.5">
-                        {allowFractions && (
-                            <span className="text-[9px] font-bold text-secondary/70 flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-[10px]">scatter_plot</span>
-                                fracción
+                    {/* Badge oferta */}
+                    {hasOffer && (
+                        <div className="flex items-center gap-xs mt-0.5">
+                            <span className="flex items-center gap-0.5 text-[10px] font-bold text-secondary bg-secondary/10 px-1.5 py-0.5 rounded-full">
+                                <span className="material-symbols-outlined text-[11px]"
+                                    style={{ fontVariationSettings: "'FILL' 1" }}>local_offer</span>
+                                {typeLabel}
                             </span>
-                        )}
-                        <span className="text-on-surface-variant font-mono text-[10px]">{item.sku || '—'}</span>
+                            <span className="text-[10px] text-green-700 font-bold bg-green-50 px-1.5 py-0.5 rounded-full">
+                                Ahorro: ${disc.toFixed(2)}
+                            </span>
+                        </div>
+                    )}
+
+                    {/* Controles cantidad */}
+                    <div className="flex items-center justify-between mt-1">
+                        <div className={`flex items-center rounded-lg border overflow-hidden ${hasOffer
+                            ? 'border-secondary/40 bg-secondary/5'
+                            : 'border-outline-variant bg-surface-container-low'}`}>
+                            <button onClick={handleMinus}
+                                className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0">
+                                <span className="material-symbols-outlined text-sm">remove</span>
+                            </button>
+                            <input
+                                type="text"
+                                inputMode={allowFractions ? 'decimal' : 'numeric'}
+                                value={inputVal}
+                                onChange={e => setInputVal(e.target.value)}
+                                onBlur={commitInput}
+                                onKeyDown={handleKeyDown}
+                                onFocus={e => e.target.select()}
+                                className="w-14 h-8 text-center font-bold text-[13px] bg-transparent focus:outline-none focus:bg-secondary/5 transition-colors"
+                            />
+                            <button onClick={handlePlus}
+                                className="w-8 h-8 flex items-center justify-center hover:bg-surface-container-high transition-colors shrink-0">
+                                <span className="material-symbols-outlined text-sm">add</span>
+                            </button>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-0.5">
+                            {allowFractions && (
+                                <span className="text-[9px] font-bold text-secondary/70 flex items-center gap-0.5">
+                                    <span className="material-symbols-outlined text-[10px]">scatter_plot</span>
+                                    fracción
+                                </span>
+                            )}
+                            <span className="text-on-surface-variant font-mono text-[10px]">{item.sku || '—'}</span>
+                        </div>
                     </div>
                 </div>
+
+                {/* Tap-away overlay para cerrar swipe en touch */}
+                {revealed && (
+                    <div
+                        className="absolute inset-0"
+                        onTouchStart={(e) => { e.preventDefault(); closeSwipe(); }}
+                    />
+                )}
             </div>
         </div>
     );
@@ -257,30 +348,30 @@ function CartItem({ item, onUpdateQuantity }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // TicketSidebar
 // ─────────────────────────────────────────────────────────────────────────────
-// DESPUÉS
 export default function TicketSidebar({
     cart,
     products,
     onUpdateQuantity,
+    onRemoveItem,       // ← nuevo prop: (itemId) => void
     onClearCart,
     onSaleSuccess,
     onAddProduct,
     cajaId,
-    cajaNombre = '',    // ← agregar
+    cajaNombre = '',
     serie,
     pendingOffer,
     onApplyOffer,
     onDismissOffer,
 }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [nextFolio, setNextFolio] = useState(null);
+    const [nextFolio,   setNextFolio]   = useState(null);
 
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState([]);
+    const [query,       setQuery]       = useState('');
+    const [results,     setResults]     = useState([]);
     const [showResults, setShowResults] = useState(false);
-    const searchRef = useRef(null);
-    const inputRef = useRef(null);
-    const lastScan = useRef('');
+    const searchRef  = useRef(null);
+    const inputRef   = useRef(null);
+    const lastScan   = useRef('');
 
     useEffect(() => { if (serie) setNextFolio(serie.next_folio); }, [serie]);
 
@@ -298,7 +389,7 @@ export default function TicketSidebar({
         if (!q) { setResults([]); setShowResults(false); return; }
         const matches = (products || []).filter(p => {
             const byName = p.name?.toLowerCase().includes(q);
-            const bySku = p.sku?.toLowerCase().includes(q);
+            const bySku  = p.sku?.toLowerCase().includes(q);
             const byKeys = (p.additional_keys || []).some(k => k?.toLowerCase().includes(q));
             return byName || bySku || byKeys;
         }).slice(0, 8);
@@ -336,10 +427,9 @@ export default function TicketSidebar({
         ? `${serie.prefix}${String(nextFolio).padStart(4, '0')}`
         : '...';
 
-    // ── Totales usando effectiveSubtotal para reflejar descuentos ─────────────
     const subtotalConDescuentos = cart.reduce((sum, item) => sum + effectiveSubtotal(item), 0);
-    const descuentoTotal = cart.reduce((sum, item) => sum + lineDiscount(item), 0);
-    const total = subtotalConDescuentos;
+    const descuentoTotal        = cart.reduce((sum, item) => sum + lineDiscount(item), 0);
+    const total                 = subtotalConDescuentos;
 
     const handleFinishSale = () => {
         setIsModalOpen(false);
@@ -351,7 +441,7 @@ export default function TicketSidebar({
     return (
         <section className="flex-[1.5] flex flex-col bg-white shadow-[-4px_0_12px_rgba(0,0,0,0.05)] z-20">
 
-            {/* ── Header ── */}
+            {/* Header */}
             <div className="px-md pt-md pb-2 border-b border-outline-variant bg-slate-50">
                 <div className="flex justify-between items-center mb-2">
                     <h2 className="font-headline-md text-headline-md text-on-surface">
@@ -363,7 +453,7 @@ export default function TicketSidebar({
                     </button>
                 </div>
 
-                {/* Barra de búsqueda / escaneo */}
+                {/* Búsqueda / escaneo */}
                 <div className="relative" ref={searchRef}>
                     <div className="flex items-center gap-2 px-3 py-2 bg-white border border-outline-variant rounded-xl focus-within:ring-2 focus-within:ring-secondary focus-within:border-secondary transition-all">
                         <span className="material-symbols-outlined text-[18px] text-outline shrink-0">qr_code_scanner</span>
@@ -387,7 +477,7 @@ export default function TicketSidebar({
                     {showResults && results.length > 0 && (
                         <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-outline-variant/50 rounded-xl shadow-xl z-50 overflow-hidden max-h-64 overflow-y-auto">
                             {results.map(p => {
-                                const img = p.images?.[0]?.url || p.image_url;
+                                const img  = p.images?.[0]?.url || p.image_url;
                                 const unit = p.unit || 'pza.';
                                 return (
                                     <button key={p.id} onClick={() => addProduct(p)}
@@ -424,7 +514,7 @@ export default function TicketSidebar({
                 </div>
             </div>
 
-            {/* ── Banner de oferta detectada ── */}
+            {/* Banner oferta */}
             {pendingOffer && (
                 <OfferBanner
                     pendingOffer={pendingOffer}
@@ -433,7 +523,7 @@ export default function TicketSidebar({
                 />
             )}
 
-            {/* ── Items ── */}
+            {/* Items */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-md space-y-md">
                 {cart.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-outline-variant">
@@ -442,15 +532,19 @@ export default function TicketSidebar({
                     </div>
                 ) : (
                     cart.map(item => (
-                        <CartItem key={item.id} item={item} onUpdateQuantity={onUpdateQuantity} />
+                        <CartItem
+                            key={item.id}
+                            item={item}
+                            onUpdateQuantity={onUpdateQuantity}
+                            onRemove={onRemoveItem}
+                        />
                     ))
                 )}
             </div>
 
-            {/* ── Totales ── */}
+            {/* Totales */}
             <div className="p-lg bg-surface-container-lowest border-t border-outline-variant space-y-md">
                 <div className="space-y-sm">
-                    {/* Desglose solo si hay descuentos */}
                     {descuentoTotal > 0 && (
                         <>
                             <div className="flex justify-between text-on-surface-variant font-body-sm text-body-sm">
@@ -468,7 +562,6 @@ export default function TicketSidebar({
                         </>
                     )}
 
-                    {/* Si no hay descuentos muestra el subtotal normal */}
                     {descuentoTotal === 0 && (
                         <div className="flex justify-between text-on-surface-variant font-body-sm text-body-sm">
                             <span>Subtotal</span>
@@ -501,7 +594,6 @@ export default function TicketSidebar({
                 </div>
             </div>
 
-            
             <CheckoutModal
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
@@ -509,7 +601,7 @@ export default function TicketSidebar({
                 total={total}
                 onFinishSale={handleFinishSale}
                 cajaId={cajaId}
-                cajaNombre={cajaNombre}    // ← agregar
+                cajaNombre={cajaNombre}
             />
         </section>
     );
