@@ -15,7 +15,8 @@ import invoiceSeriesRouter from './routes/invoice-series.js';
 import offersRouter        from './routes/offers.js';          // ← nuevo
 import aiRouter from './routes/ai.js';
 import adGenerateRouter from './routes/ad-generate.js';
-
+ import appUpdatesRoutes from './routes/appUpdates.js';
+   
 
 dotenv.config();
 
@@ -27,7 +28,7 @@ app.use(express.json());
 app.use('/api/auth',   authRoutes);
 app.use('/api/upload', uploadRouter);
 app.use('/api/ai', adGenerateRouter);
-
+app.use('/api/app-updates', appUpdatesRoutes);
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
 app.use('/api/ai', aiRouter);
 app.use('/api/products',       verifyToken, productRoutes);
