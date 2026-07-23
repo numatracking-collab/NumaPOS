@@ -189,9 +189,11 @@ export default function DevicesPanel() {
               print_disabled
             </span>
           </div>
-          <p className="text-on-surface-variant text-[13px] font-medium">Sin dispositivos vinculados</p>
-          <p className="text-on-surface-variant/50 text-[11px] mt-1 max-w-xs">
-            Usa el botón <strong>Agregar</strong> para conectar una impresora de tickets
+          <p className="text-on-surface text-[13px] font-medium">
+            Sin dispositivos vinculados
+          </p>
+          <p className="text-on-surface-variant text-[12px] leading-relaxed mt-1.5 max-w-[220px]">
+            Usa el botón <span className="font-semibold text-on-surface">Agregar</span> para conectar una impresora de tickets
           </p>
         </div>
 
