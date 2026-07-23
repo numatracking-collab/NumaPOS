@@ -68,11 +68,11 @@ export default function UpdateNotice() {
         );
     }
 
-    // ── Opcional: banner descartable arriba de la pantalla ──────────────────
+    // ── Opcional: banner descartable, fijo arriba de toda la ventana ────────
     return (
-        <div className="shrink-0 z-30 mx-md mt-md rounded-xl overflow-hidden border border-secondary/30 bg-gradient-to-r from-secondary/10 to-secondary/5 shadow-sm">
+        <div className="fixed top-0 inset-x-0 z-40 m-md rounded-xl overflow-hidden border border-secondary/30 bg-white shadow-lg">
             <div className="h-1 bg-gradient-to-r from-secondary to-secondary/40" />
-            <div className="px-md py-sm flex items-start justify-between gap-sm">
+            <div className="px-md py-sm flex items-start justify-between gap-sm bg-gradient-to-r from-secondary/10 to-secondary/5">
                 <div className="flex items-start gap-xs min-w-0">
                     <span className="material-symbols-outlined text-[18px] text-secondary shrink-0 mt-0.5"
                         style={{ fontVariationSettings: "'FILL' 1" }}>system_update</span>
