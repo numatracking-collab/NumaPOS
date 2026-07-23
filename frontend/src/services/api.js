@@ -145,3 +145,10 @@ export const offersService = {
     setStatus: (id, status) => request('PATCH', `/offers/${id}/status`, { status }),
     delete: (id) => request('DELETE', `/offers/${id}`),
 };
+
+/* ── Actualizaciones de la app ──────────────────────────────────────────
+   Solo lectura desde este lado: numa-admin-backend es quien publica.
+───────────────────────────────────────────────────────────────────────── */
+export const appUpdatesService = {
+    getLatest: () => request('GET', '/app-updates/latest'),
+};

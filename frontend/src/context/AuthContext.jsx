@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { authService, setLicenseBlockedHandler } from '../services/api';
 import { reconnectBTPrinters, startBTWatcher } from '../services/printerService';
 import LicenseExpiredModal from '../components/LicenseExpiredModal';
+import UpdateNotice, { DISMISSED_KEY } from '../components/UpdateNotice';
 
 const AuthContext = createContext(null);
 
@@ -53,6 +54,11 @@ export function AuthProvider({ children }) {
         sessionStorage.setItem('numa_tenant', JSON.stringify(data.tenant));
         if (data.license) sessionStorage.setItem('numa_license', JSON.stringify(data.license));
 
+        // Sesión nueva: si había un aviso de actualización descartado en una
+        // sesión anterior (misma pestaña), lo volvemos a mostrar si sigue
+        // sin actualizarse.
+        sessionStorage.removeItem(DISMISSED_KEY);
+
         reconnectBTPrinters();
     };
 
@@ -89,6 +95,8 @@ export function AuthProvider({ children }) {
     return (
         <AuthContext.Provider value={value}>
             {children}
+
+            {token && <UpdateNotice />}
 
             {licenseBlock && (
                 <LicenseExpiredModal
