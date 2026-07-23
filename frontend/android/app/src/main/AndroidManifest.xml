@@ -10,7 +10,7 @@
     <!-- Bluetooth Android 12+ (API 31+) -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- Requerido por Android para escaneo BLE en versiones < 12 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
 
@@ -21,6 +21,15 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+        <!-- Requerido por @capacitor-mlkit/barcode-scanning para que
+             ML Kit descargue/inicialice el módulo de escaneo de códigos.
+             Sin esta etiqueta, el escaneo nativo no se monta aunque el
+             permiso de cámara ya esté concedido. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"

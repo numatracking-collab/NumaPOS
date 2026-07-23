@@ -439,7 +439,7 @@ export default function TicketSidebar({
     };
 
     return (
-        <section className="flex-[1.5] flex flex-col bg-white shadow-[-4px_0_12px_rgba(0,0,0,0.05)] z-20">
+        <section className="flex-[1.5] flex flex-col h-full min-h-0 bg-white shadow-[-4px_0_12px_rgba(0,0,0,0.05)] z-20">
 
             {/* Header */}
             <div className="px-md pt-md pb-2 border-b border-outline-variant bg-slate-50">

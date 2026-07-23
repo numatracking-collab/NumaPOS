@@ -1,11 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    runtimeEnv.js
-   ───────────────────────────────────────────────────────────────────────────
    Detecta en qué "cascarón" está corriendo el frontend:
-     - 'electron'    → app de escritorio Windows (impresión por USB)
-     - 'capacitor'   → app Android empaquetada (impresión por BT nativo)
-     - 'web'         → navegador normal (impresión por Web Bluetooth, el
-                        comportamiento que ya tienes hoy y que NO cambia)
+     'electron'  → app de escritorio Windows  (impresión por USB)
+     'capacitor' → app Android empaquetada    (BT nativo, cámara nativa, etc.)
+     'web'       → navegador normal            (comportamiento por defecto)
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export function isElectron() {
