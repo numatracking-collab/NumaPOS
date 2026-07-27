@@ -56,7 +56,7 @@ export default function LoginPage() {
                     <div className="bg-primary-container px-xl py-xl text-center">
                         <div className="inline-flex items-center justify-center w-[100px] h-[100px] bg-secondary rounded-[16px] mb-md shadow-lg">
                             <img
-                                src="/NUMA_POS_circular.svg"
+                                src="./NUMA_POS_circular.svg"
                                 alt="NUMA POS"
                                 className="w-[100px] h-[100px] object-contain"
                             />

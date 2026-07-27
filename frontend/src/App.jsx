@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
@@ -10,10 +10,15 @@ import HistoryPage from './pages/HistoryPage';
 import MarketingPage from './pages/MarketingPage';
 import ReportsPage from './pages/ReportsPage';
 
+// Electron carga la app como file:// — HashRouter funciona, BrowserRouter no.
+// Web y Android siguen usando BrowserRouter sin ningún cambio.
+const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
+const Router = isElectron ? HashRouter : BrowserRouter;
+
 function App() {
     return (
         <AuthProvider>
-            <BrowserRouter>
+            <Router>
                 <Routes>
                     <Route path="/login"  element={<LoginPage />} />
                     <Route path="/signup" element={<SignUpPage />} />
@@ -26,9 +31,8 @@ function App() {
                         <Route path="/reports"   element={<ReportsPage />} />
                     </Route>
                 </Routes>
-            </BrowserRouter>
+            </Router>
         </AuthProvider>
     );
 }
-
 export default App;

@@ -1,24 +1,17 @@
 import { useState, useEffect } from 'react';
-import { cacheBtDevice, scanForPrinter, sendTestTicket } from '../../services/printerService';
-import { isCapacitor } from '../../services/runtimeEnv';
+import { cacheBtDevice, scanForPrinter, sendTestTicket, getWindowsPrinters } from '../../services/printerService';
+import { isCapacitor, isElectron } from '../../services/runtimeEnv';
 import { buildTestTicket } from '../../services/ticketBuilder';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Recuperar referencia BT guardada sin pedir al usuario que reseleccione
-   ───────────────────────────────────────────────────────────────────────────
-   FASE 2: en Capacitor no existe navigator.bluetooth.getDevices() — el
-   emparejamiento vive a nivel sistema Android, no a nivel "permiso de
-   origin". Por eso esta función, en Capacitor, simplemente confirma que
-   hay una address guardada (el deviceId) y no necesita "buscar" nada: el
-   intento real de reconexión ocurre al momento de imprimir
-   (sendTestTicket / printSaleTicket), exactamente igual que con cualquier
-   otra impresora BT del sistema operativo.
+   ELECTRON: no aplica — no hay BLE.
+   CAPACITOR: el emparejamiento vive a nivel sistema Android.
+   WEB: busca en navigator.bluetooth.getDevices().
 ═══════════════════════════════════════════════════════════════════════════ */
 async function getStoredBtDevice(address) {
-  if (isCapacitor()) {
-    // No hay objeto "vivo" que recuperar — basta con devolver un marcador
-    // mínimo para que la UI muestre "vinculado" si ya existe una address.
-    return address ? { id: address, name: null, __capacitorStub: true } : null;
+  if (isElectron() || isCapacitor()) {
+    return address ? { id: address, name: null, __stub: true } : null;
   }
   if (!navigator.bluetooth?.getDevices) return null;
   const devices = await navigator.bluetooth.getDevices();
@@ -35,27 +28,40 @@ async function getStoredBtDevice(address) {
 export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
 
   const [step, setStep] = useState(existingDevice ? 2 : 1);
-
   const [connectionType, setConnectionType] = useState(existingDevice?.connectionType ?? '');
   const [printerName, setPrinterName] = useState(existingDevice?.name ?? 'Impresora de tickets');
   const [address, setAddress] = useState(existingDevice?.address ?? '');
 
   /* Configuraciones */
-  const [autoPrint, setAutoPrint] = useState(existingDevice?.config?.autoPrint ?? false);
-  const [openDrawer, setOpenDrawer] = useState(existingDevice?.config?.openDrawer ?? false);
+  const [autoPrint, setAutoPrint]     = useState(existingDevice?.config?.autoPrint ?? false);
+  const [openDrawer, setOpenDrawer]   = useState(existingDevice?.config?.openDrawer ?? false);
   const [ticketWidth, setTicketWidth] = useState(existingDevice?.config?.ticketWidth ?? '58');
 
-  /* Bluetooth */
-  const [btDevice, setBtDevice] = useState(null);   // { id, name, raw } normalizado (web y capacitor)
-  const [scanning, setScanning] = useState(false);
-  const [btError, setBtError] = useState('');
-  const [restoring, setRestoring] = useState(false);  // buscando dispositivo guardado
+  /* Bluetooth (web + capacitor) */
+  const [btDevice, setBtDevice]   = useState(null);
+  const [scanning, setScanning]   = useState(false);
+  const [btError, setBtError]     = useState('');
+  const [restoring, setRestoring] = useState(false);
+
+  /* Impresoras de Windows (solo Electron) */
+  const [winPrinters, setWinPrinters]         = useState([]);
+  const [loadingPrinters, setLoadingPrinters] = useState(false);
 
   /* Prueba de impresión */
-  const [testStatus, setTestStatus] = useState('idle'); // idle|printing|ok|error
-  const [testError, setTestError] = useState('');
+  const [testStatus, setTestStatus] = useState('idle');
+  const [testError, setTestError]   = useState('');
 
-  /* ── Al abrir en modo edición: recuperar referencia BT sin pedir al usuario ── */
+  /* ── En Electron: cargar impresoras del sistema al abrir ─────────────── */
+  useEffect(() => {
+    if (!isElectron()) return;
+    setLoadingPrinters(true);
+    getWindowsPrinters()
+      .then(list => setWinPrinters(list))
+      .catch(() => setWinPrinters([]))
+      .finally(() => setLoadingPrinters(false));
+  }, []);
+
+  /* ── Al abrir en modo edición: recuperar referencia BT ──────────────── */
   useEffect(() => {
     if (!existingDevice || existingDevice.connectionType !== 'bluetooth') return;
     if (!existingDevice.address) return;
@@ -64,7 +70,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
     getStoredBtDevice(existingDevice.address)
       .then(found => {
         if (found) {
-          setBtDevice({ id: found.id, name: found.name, raw: found.__capacitorStub ? null : found });
+          setBtDevice({ id: found.id, name: found.name, raw: found.__stub ? null : found });
         }
       })
       .catch(() => { /* el usuario tendrá que re-vincular */ })
@@ -77,15 +83,12 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
     setStep(2);
   };
 
-  /* ── Escaneo / selección BT ──
-     FASE 2: scanForPrinter() decide internamente si abre el selector nativo
-     de Capacitor o navigator.bluetooth.requestDevice() en web — el modal ya
-     no necesita saber en qué entorno está. */
+  /* ── Escaneo BT (web + capacitor) ── */
   const handleBluetoothScan = async () => {
     setBtError('');
     setScanning(true);
     try {
-      const found = await scanForPrinter(); // { id, name, raw }
+      const found = await scanForPrinter();
       setBtDevice(found);
       setAddress(found.id ?? '');
       if (printerName === 'Impresora de tickets' && found.name) {
@@ -98,19 +101,30 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
     }
   };
 
-  /* ── Prueba de impresión real ──
-     FASE 2: sendTestTicket() decide internamente web vs capacitor. */
+  /* ── Seleccionar impresora de Windows (Electron) ── */
+  const handleSelectWinPrinter = (name) => {
+    setAddress(name);
+    if (printerName === 'Impresora de tickets') setPrinterName(name);
+  };
+
+  /* ── Prueba de impresión ── */
   const handleTestPrint = async () => {
     setTestStatus('printing');
     setTestError('');
     try {
-      if (connectionType === 'bluetooth') {
+      const ticket = buildTestTicket(printerName, ticketWidth);
+
+      if (isElectron()) {
+        // En Electron: mandamos directo al adapter por IPC
+        if (!address) throw new Error('Selecciona una impresora primero.');
+        await sendTestTicket(address, null, ticket);
+
+      } else if (connectionType === 'bluetooth') {
         if (!btDevice) throw new Error('No hay dispositivo Bluetooth vinculado.');
-        const ticket = buildTestTicket(printerName, ticketWidth);
         await sendTestTicket(btDevice.id, btDevice.raw, ticket);
+
       } else {
-        /* Windows: no hay acceso directo desde el navegador.
-           El ticket se abre en una ventana de impresión del sistema. */
+        // Windows en web (ventana de impresión del sistema)
         const win = window.open('', '_blank', 'width=300,height=400');
         if (!win) throw new Error('El navegador bloqueó la ventana emergente.');
         win.document.write(`
@@ -148,47 +162,39 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
       type: 'printer',
       model: '5890Z-l',
       name: printerName.trim() || 'Impresora de tickets',
-      connectionType,
+      connectionType: isElectron() ? 'windows' : connectionType,
       address,
       config: { autoPrint, openDrawer, ticketWidth },
     };
 
-    // ← Clave: guardar la referencia BT viva en el caché del servicio.
-    // En Capacitor, cacheBtDevice() es un no-op seguro (no hay objeto vivo
-    // que cachear — el deviceId guardado en saved.address ya es suficiente).
-    if (connectionType === 'bluetooth' && btDevice?.raw) {
+    if (!isElectron() && connectionType === 'bluetooth' && btDevice?.raw) {
       cacheBtDevice(saved.address, btDevice.raw);
     }
 
     onSave(saved);
   };
 
-  const canSave =
-    printerName.trim().length > 0 &&
-    (
-      (connectionType === 'bluetooth' && (btDevice !== null || !!existingDevice?.address)) ||
-      (connectionType === 'windows' && address.trim().length > 0)
-    );
+  const canSave = printerName.trim().length > 0 && address.trim().length > 0;
 
-  const canTest =
-    testStatus !== 'printing' &&
-    (
-      (connectionType === 'bluetooth' && btDevice !== null) ||
-      (connectionType === 'windows' && address.trim().length > 0)
-    );
+  const canTest = testStatus !== 'printing' && (
+    isElectron()
+      ? address.trim().length > 0
+      : (connectionType === 'bluetooth' && btDevice !== null) ||
+        (connectionType === 'windows' && address.trim().length > 0)
+  );
 
   /* ══════════════════════════════════════════════════════════════════
      Render
   ══════════════════════════════════════════════════════════════════ */
   return (
-<div className="fixed inset-0 bg-black/40 z-[200] flex items-end md:items-center justify-center p-0 md:p-6">
+    <div className="fixed inset-0 bg-black/40 z-[200] flex items-end md:items-center justify-center p-0 md:p-6">
       <div className="bg-surface-bright w-full md:w-[440px] md:rounded-2xl rounded-t-2xl
                 border border-outline-variant shadow-xl flex flex-col max-h-[90dvh] overflow-hidden
                 mb-[76px] md:mb-0">
 
         {/* Header */}
         <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-outline-variant shrink-0">
-          {step === 2 && (
+          {step === 2 && !isElectron() && (
             <button
               onClick={() => { if (!existingDevice) setStep(1); }}
               disabled={!!existingDevice}
@@ -204,11 +210,14 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
           </span>
           <div className="flex-1">
             <h3 className="font-semibold text-on-surface text-[15px] leading-tight">
-              {step === 1 ? 'Agregar impresora de tickets' : existingDevice ? 'Editar impresora' : 'Configurar impresora'}
+              {isElectron()
+                ? (existingDevice ? 'Editar impresora' : 'Agregar impresora de tickets')
+                : step === 1 ? 'Agregar impresora de tickets'
+                : existingDevice ? 'Editar impresora' : 'Configurar impresora'}
             </h3>
-            {step === 2 && (
+            {(step === 2 || isElectron()) && (
               <p className="text-on-surface-variant text-[11px] mt-0.5">
-                Modelo: POS 5890Z-l · {connectionType === 'bluetooth' ? 'Bluetooth' : 'Cola de impresión Windows'}
+                Modelo: POS 5890Z-l · {isElectron() || connectionType === 'windows' ? 'Cola de impresión Windows' : 'Bluetooth'}
               </p>
             )}
           </div>
@@ -221,24 +230,10 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
         {/* Contenido */}
         <div className="overflow-y-auto custom-scrollbar flex-1 px-5 py-4">
 
-          {/* Paso 1 */}
-          {step === 1 && (
-            <div className="flex flex-col gap-2">
-              <p className="text-on-surface-variant text-[12px] mb-1">¿Cómo vas a conectar la impresora?</p>
-              <ConnectionOption icon="bluetooth" title="Bluetooth"
-                description="Para celular o tableta Android"
-                onClick={() => handleSelectType('bluetooth')} />
-              <ConnectionOption icon="computer" title="Cola de impresión Windows"
-                description="Para PC con impresora conectada por USB"
-                onClick={() => handleSelectType('windows')} />
-            </div>
-          )}
-
-          {/* Paso 2 */}
-          {step === 2 && (
+          {/* ── ELECTRON: siempre va directo al selector de impresoras ── */}
+          {isElectron() ? (
             <div className="flex flex-col gap-5">
 
-              {/* Nombre */}
               <FormField label="Nombre del dispositivo">
                 <input type="text" value={printerName}
                   onChange={e => setPrinterName(e.target.value)}
@@ -248,77 +243,62 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
                              focus:outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary" />
               </FormField>
 
-              {/* Bluetooth */}
-              {connectionType === 'bluetooth' && (
-                <FormField label="Dispositivo Bluetooth"
-                  hint="Asegúrate de que la impresora esté encendida y en rango.">
+              {/* Selector de impresoras del sistema */}
+              <FormField label="Impresora de Windows"
+                hint="Selecciona la impresora térmica instalada en este equipo.">
 
-                  {/* Restaurando referencia guardada */}
-                  {restoring && (
-                    <div className="flex items-center gap-2 py-2.5 text-on-surface-variant text-[13px]">
-                      <span className="material-symbols-outlined text-[16px] animate-spin">autorenew</span>
-                      Buscando dispositivo guardado…
-                    </div>
-                  )}
-
-                  {/* Dispositivo vinculado */}
-                  {!restoring && btDevice && (
-                    <div className="flex items-center gap-3 bg-secondary/10 border border-secondary/20
-                                    rounded-lg px-3 py-2.5">
-                      <span className="material-symbols-outlined text-[18px] text-secondary"
-                        style={{ fontVariationSettings: "'FILL' 1" }}>
-                        bluetooth_connected
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-secondary font-medium text-[13px] truncate">
-                          {btDevice.name || 'Dispositivo sin nombre'}
-                        </p>
-                        <p className="text-secondary/70 text-[10px]">Vinculado correctamente</p>
-                      </div>
-                      <button onClick={() => { setBtDevice(null); setAddress(''); }}
-                        className="p-1 rounded-md text-secondary/70 hover:text-error hover:bg-error/10 transition-colors">
-                        <span className="material-symbols-outlined text-[15px]">close</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Sin dispositivo → botón de búsqueda */}
-                  {!restoring && !btDevice && (
-                    <button onClick={handleBluetoothScan} disabled={scanning}
-                      className="flex items-center justify-center gap-2 w-full py-2.5
-                                       border-2 border-dashed border-secondary/40 rounded-lg
-                                       text-secondary text-[13px] font-medium
-                                       hover:bg-secondary/5 transition-colors disabled:opacity-60">
-                      <span className={`material-symbols-outlined text-[18px] ${scanning ? 'animate-spin' : ''}`}>
-                        {scanning ? 'autorenew' : 'bluetooth_searching'}
-                      </span>
-                      {scanning ? 'Buscando dispositivos…' : 'Buscar impresora'}
-                    </button>
-                  )}
-
-                  {btError && (
-                    <p className="flex items-start gap-1.5 text-error text-[11px] mt-2 leading-snug">
-                      <span className="material-symbols-outlined text-[14px] mt-0.5 shrink-0">error</span>
-                      {btError}
+                {loadingPrinters ? (
+                  <div className="flex items-center gap-2 py-3 text-on-surface-variant text-[13px]">
+                    <span className="material-symbols-outlined text-[16px] animate-spin">autorenew</span>
+                    Cargando impresoras…
+                  </div>
+                ) : winPrinters.length === 0 ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-[12px] text-on-surface-variant/60">
+                      No se encontraron impresoras instaladas. También puedes ingresar el nombre manualmente:
                     </p>
-                  )}
-                </FormField>
-              )}
+                    <input type="text" value={address} onChange={e => setAddress(e.target.value)}
+                      placeholder="Termica58  ó  \\PC-CAJA\Termica58"
+                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg
+                                 px-3 py-2 text-[13px] text-on-surface font-mono
+                                 placeholder:text-on-surface-variant/40 placeholder:font-sans
+                                 focus:outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary" />
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {winPrinters.map(p => (
+                      <button
+                        key={p.name}
+                        onClick={() => handleSelectWinPrinter(p.name)}
+                        className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl border-2 text-left transition-all
+                          ${address === p.name
+                            ? 'border-secondary bg-secondary/10'
+                            : 'border-outline-variant hover:border-secondary/40 hover:bg-surface-container'}`}
+                      >
+                        <span className={`material-symbols-outlined text-[18px] ${address === p.name ? 'text-secondary' : 'text-on-surface-variant'}`}
+                          style={{ fontVariationSettings: "'FILL' 1" }}>
+                          print
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[13px] font-medium truncate ${address === p.name ? 'text-secondary' : 'text-on-surface'}`}>
+                            {p.name}
+                          </p>
+                          {p.isDefault && (
+                            <p className="text-[10px] text-on-surface-variant/60">Predeterminada</p>
+                          )}
+                        </div>
+                        {address === p.name && (
+                          <span className="material-symbols-outlined text-[18px] text-secondary shrink-0"
+                            style={{ fontVariationSettings: "'FILL' 1" }}>
+                            check_circle
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </FormField>
 
-              {/* Windows */}
-              {connectionType === 'windows' && (
-                <FormField label="Nombre de la impresora en Windows"
-                  hint={<>Nombre exacto en <em>Configuración → Impresoras</em>. Red: <code className="bg-surface-container rounded px-1">\\PC-CAJA\Termica58</code></>}>
-                  <input type="text" value={address} onChange={e => setAddress(e.target.value)}
-                    placeholder="Termica58  ó  \\PC-CAJA\Termica58"
-                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg
-                               px-3 py-2 text-[13px] text-on-surface font-mono
-                               placeholder:text-on-surface-variant/40 placeholder:font-sans
-                               focus:outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary" />
-                </FormField>
-              )}
-
-              {/* ── Configuración ── */}
               <SectionDivider label="Configuración" />
 
               <FormField label="Ancho del ticket">
@@ -326,7 +306,7 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
                   {['58', '80'].map(w => (
                     <button key={w} onClick={() => setTicketWidth(w)}
                       className={`flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all
-                              ${ticketWidth === w
+                        ${ticketWidth === w
                           ? 'border-secondary bg-secondary/10 text-secondary'
                           : 'border-outline-variant text-on-surface-variant hover:border-secondary/40 hover:bg-surface-container'}`}>
                       <div className="flex items-end gap-0.5">
@@ -347,53 +327,196 @@ export default function PrinterSetupModal({ existingDevice, onSave, onClose }) {
                 description="Envía el pulso para abrir el cajón al imprimir"
                 checked={openDrawer} onChange={setOpenDrawer} />
 
-              {/* ── Prueba ── */}
               <SectionDivider label="Prueba" />
 
               <button onClick={handleTestPrint} disabled={!canTest}
                 className="flex items-center justify-center gap-2 w-full py-2.5
-                                 border border-outline-variant rounded-lg text-on-surface-variant
-                                 text-[13px] hover:bg-surface-container transition-colors
-                                 disabled:opacity-40 disabled:cursor-not-allowed">
+                           border border-outline-variant rounded-lg text-on-surface-variant
+                           text-[13px] hover:bg-surface-container transition-colors
+                           disabled:opacity-40 disabled:cursor-not-allowed">
                 {testStatus === 'printing' && <><span className="material-symbols-outlined text-[16px] animate-spin">autorenew</span>Enviando…</>}
-                {testStatus === 'ok' && <><span className="material-symbols-outlined text-[16px] text-[#009668]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>¡Impreso correctamente!</>}
-                {testStatus === 'error' && <><span className="material-symbols-outlined text-[16px] text-error" style={{ fontVariationSettings: "'FILL' 1" }}>error</span>Error al imprimir</>}
-                {testStatus === 'idle' && <><span className="material-symbols-outlined text-[16px]">print</span>Imprimir "Hola Mundo"</>}
+                {testStatus === 'ok'       && <><span className="material-symbols-outlined text-[16px] text-[#009668]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>¡Impreso correctamente!</>}
+                {testStatus === 'error'    && <><span className="material-symbols-outlined text-[16px] text-error" style={{ fontVariationSettings: "'FILL' 1" }}>error</span>Error al imprimir</>}
+                {testStatus === 'idle'     && <><span className="material-symbols-outlined text-[16px]">print</span>Imprimir "Hola Mundo"</>}
               </button>
 
-              {/* Hint si no puede probar */}
-              {!canTest && testStatus === 'idle' && (
-                <p className="text-on-surface-variant/50 text-[10px] -mt-3 text-center">
-                  {connectionType === 'bluetooth'
-                    ? 'Vincula la impresora primero para probar'
-                    : 'Ingresa el nombre de la impresora primero'}
-                </p>
-              )}
-
-              {/* Detalle del error */}
               {testStatus === 'error' && testError && (
                 <p className="text-error/80 text-[10px] -mt-3 leading-snug bg-error/5
                               border border-error/20 rounded-lg px-3 py-2">
                   {testError}
                 </p>
               )}
-
             </div>
+
+          ) : (
+          /* ── WEB / CAPACITOR: flujo original de dos pasos ── */
+          <>
+            {/* Paso 1 — elegir tipo de conexión */}
+            {step === 1 && (
+              <div className="flex flex-col gap-2">
+                <p className="text-on-surface-variant text-[12px] mb-1">¿Cómo vas a conectar la impresora?</p>
+                <ConnectionOption icon="bluetooth" title="Bluetooth"
+                  description="Para celular o tableta Android"
+                  onClick={() => handleSelectType('bluetooth')} />
+                <ConnectionOption icon="computer" title="Cola de impresión Windows"
+                  description="Para PC con impresora conectada por USB"
+                  onClick={() => handleSelectType('windows')} />
+              </div>
+            )}
+
+            {/* Paso 2 — configurar */}
+            {step === 2 && (
+              <div className="flex flex-col gap-5">
+
+                <FormField label="Nombre del dispositivo">
+                  <input type="text" value={printerName}
+                    onChange={e => setPrinterName(e.target.value)}
+                    placeholder="Impresora de tickets"
+                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg
+                               px-3 py-2 text-[13px] text-on-surface placeholder:text-on-surface-variant/50
+                               focus:outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary" />
+                </FormField>
+
+                {/* Bluetooth */}
+                {connectionType === 'bluetooth' && (
+                  <FormField label="Dispositivo Bluetooth"
+                    hint="Asegúrate de que la impresora esté encendida y en rango.">
+
+                    {restoring && (
+                      <div className="flex items-center gap-2 py-2.5 text-on-surface-variant text-[13px]">
+                        <span className="material-symbols-outlined text-[16px] animate-spin">autorenew</span>
+                        Buscando dispositivo guardado…
+                      </div>
+                    )}
+
+                    {!restoring && btDevice && (
+                      <div className="flex items-center gap-3 bg-secondary/10 border border-secondary/20
+                                      rounded-lg px-3 py-2.5">
+                        <span className="material-symbols-outlined text-[18px] text-secondary"
+                          style={{ fontVariationSettings: "'FILL' 1" }}>
+                          bluetooth_connected
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-secondary font-medium text-[13px] truncate">
+                            {btDevice.name || 'Dispositivo sin nombre'}
+                          </p>
+                          <p className="text-secondary/70 text-[10px]">Vinculado correctamente</p>
+                        </div>
+                        <button onClick={() => { setBtDevice(null); setAddress(''); }}
+                          className="p-1 rounded-md text-secondary/70 hover:text-error hover:bg-error/10 transition-colors">
+                          <span className="material-symbols-outlined text-[15px]">close</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {!restoring && !btDevice && (
+                      <button onClick={handleBluetoothScan} disabled={scanning}
+                        className="flex items-center justify-center gap-2 w-full py-2.5
+                                   border-2 border-dashed border-secondary/40 rounded-lg
+                                   text-secondary text-[13px] font-medium
+                                   hover:bg-secondary/5 transition-colors disabled:opacity-60">
+                        <span className={`material-symbols-outlined text-[18px] ${scanning ? 'animate-spin' : ''}`}>
+                          {scanning ? 'autorenew' : 'bluetooth_searching'}
+                        </span>
+                        {scanning ? 'Buscando dispositivos…' : 'Buscar impresora'}
+                      </button>
+                    )}
+
+                    {btError && (
+                      <p className="flex items-start gap-1.5 text-error text-[11px] mt-2 leading-snug">
+                        <span className="material-symbols-outlined text-[14px] mt-0.5 shrink-0">error</span>
+                        {btError}
+                      </p>
+                    )}
+                  </FormField>
+                )}
+
+                {/* Windows manual (en web) */}
+                {connectionType === 'windows' && (
+                  <FormField label="Nombre de la impresora en Windows"
+                    hint={<>Nombre exacto en <em>Configuración → Impresoras</em>. Red: <code className="bg-surface-container rounded px-1">\\PC-CAJA\Termica58</code></>}>
+                    <input type="text" value={address} onChange={e => setAddress(e.target.value)}
+                      placeholder="Termica58  ó  \\PC-CAJA\Termica58"
+                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg
+                                 px-3 py-2 text-[13px] text-on-surface font-mono
+                                 placeholder:text-on-surface-variant/40 placeholder:font-sans
+                                 focus:outline-none focus:ring-2 focus:ring-secondary/30 focus:border-secondary" />
+                  </FormField>
+                )}
+
+                <SectionDivider label="Configuración" />
+
+                <FormField label="Ancho del ticket">
+                  <div className="flex gap-2">
+                    {['58', '80'].map(w => (
+                      <button key={w} onClick={() => setTicketWidth(w)}
+                        className={`flex-1 flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all
+                          ${ticketWidth === w
+                            ? 'border-secondary bg-secondary/10 text-secondary'
+                            : 'border-outline-variant text-on-surface-variant hover:border-secondary/40 hover:bg-surface-container'}`}>
+                        <div className="flex items-end gap-0.5">
+                          <div className={`rounded-sm transition-all ${ticketWidth === w ? 'bg-secondary' : 'bg-on-surface-variant/30'}`}
+                            style={{ width: w === '58' ? 20 : 28, height: 32 }} />
+                        </div>
+                        <span className="text-[13px] font-semibold">{w} mm</span>
+                      </button>
+                    ))}
+                  </div>
+                </FormField>
+
+                <ToggleRow icon="receipt_long" title="Imprimir al vender"
+                  description="Imprime el ticket automáticamente al cerrar la venta"
+                  checked={autoPrint} onChange={setAutoPrint} />
+
+                <ToggleRow icon="point_of_sale" title="Abrir cajón de dinero"
+                  description="Envía el pulso para abrir el cajón al imprimir"
+                  checked={openDrawer} onChange={setOpenDrawer} />
+
+                <SectionDivider label="Prueba" />
+
+                <button onClick={handleTestPrint} disabled={!canTest}
+                  className="flex items-center justify-center gap-2 w-full py-2.5
+                             border border-outline-variant rounded-lg text-on-surface-variant
+                             text-[13px] hover:bg-surface-container transition-colors
+                             disabled:opacity-40 disabled:cursor-not-allowed">
+                  {testStatus === 'printing' && <><span className="material-symbols-outlined text-[16px] animate-spin">autorenew</span>Enviando…</>}
+                  {testStatus === 'ok'       && <><span className="material-symbols-outlined text-[16px] text-[#009668]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>¡Impreso correctamente!</>}
+                  {testStatus === 'error'    && <><span className="material-symbols-outlined text-[16px] text-error" style={{ fontVariationSettings: "'FILL' 1" }}>error</span>Error al imprimir</>}
+                  {testStatus === 'idle'     && <><span className="material-symbols-outlined text-[16px]">print</span>Imprimir "Hola Mundo"</>}
+                </button>
+
+                {!canTest && testStatus === 'idle' && (
+                  <p className="text-on-surface-variant/50 text-[10px] -mt-3 text-center">
+                    {connectionType === 'bluetooth'
+                      ? 'Vincula la impresora primero para probar'
+                      : 'Ingresa el nombre de la impresora primero'}
+                  </p>
+                )}
+
+                {testStatus === 'error' && testError && (
+                  <p className="text-error/80 text-[10px] -mt-3 leading-snug bg-error/5
+                                border border-error/20 rounded-lg px-3 py-2">
+                    {testError}
+                  </p>
+                )}
+              </div>
+            )}
+          </>
           )}
         </div>
 
         {/* Footer */}
-        {step === 2 && (
+        {(step === 2 || isElectron()) && (
           <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-outline-variant shrink-0">
             <button onClick={onClose}
               className="px-4 py-2 text-[13px] text-on-surface-variant
-                               hover:bg-surface-container rounded-lg transition-colors">
+                         hover:bg-surface-container rounded-lg transition-colors">
               Cancelar
             </button>
             <button onClick={handleSave} disabled={!canSave}
               className="px-4 py-2 text-[13px] font-medium bg-secondary text-on-secondary
-                               rounded-lg hover:bg-secondary/90 active:scale-95 transition-all
-                               disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
+                         rounded-lg hover:bg-secondary/90 active:scale-95 transition-all
+                         disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100">
               {existingDevice ? 'Guardar cambios' : 'Agregar impresora'}
             </button>
           </div>
@@ -410,8 +533,8 @@ function ConnectionOption({ icon, title, description, onClick }) {
   return (
     <button onClick={onClick}
       className="flex items-center gap-4 p-4 rounded-xl border-2 border-outline-variant
-                       hover:border-secondary hover:bg-secondary/5 active:bg-secondary/10
-                       transition-all text-left group w-full">
+                 hover:border-secondary hover:bg-secondary/5 active:bg-secondary/10
+                 transition-all text-left group w-full">
       <div className="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center
                       shrink-0 group-hover:bg-secondary/10 transition-colors">
         <span className="material-symbols-outlined text-[20px] text-secondary">{icon}</span>
