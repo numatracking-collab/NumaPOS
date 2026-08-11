@@ -6,6 +6,29 @@ const router = express.Router();
 router.use(verifyToken);
 
 /* ─────────────────────────────────────────────────
+   GET /api/products/version
+───────────────────────────────────────────────── */
+router.get('/version', async (req, res) => {
+    const { tenantId } = req.user;
+    try {
+        const result = await query(
+            `SELECT
+                COUNT(*)::text                          AS total,
+                COALESCE(MAX(id)::text, '0')            AS max_id,
+                COALESCE(MAX(updated_at)::text, '0')    AS last_updated
+             FROM products
+             WHERE tenant_id = $1`,
+            [tenantId]
+        );
+        const { total, max_id, last_updated } = result.rows[0];
+        return res.json({ version: `${total}-${max_id}-${last_updated}` });
+    } catch (err) {
+        console.error('Error en /products/version:', err);
+        return res.status(500).json({ error: 'Error al obtener versión del catálogo.' });
+    }
+});
+
+/* ─────────────────────────────────────────────────
    GET /api/products
    Devuelve productos + imágenes + claves adicionales
 ───────────────────────────────────────────────── */
@@ -155,7 +178,8 @@ router.put('/:id', async (req, res) => {
                  max_stock      = $7,
                  image_url      = $8,
                  unit           = $9,
-                 allow_fractions = $10
+                 allow_fractions = $10,
+                 updated_at      = NOW()
              WHERE id = $11 AND tenant_id = $12
              RETURNING *`,
             [
