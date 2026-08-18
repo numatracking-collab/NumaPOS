@@ -57,26 +57,15 @@ function twoCol(left, right, cols) {
     return [...enc(l + ' ' + right), LF];
 }
 
-/**
- * Línea(s) de producto.
- *
- * Si item.discount_amount > 0 imprime debajo la etiqueta de promoción
- * en NEGRITA con el descuento aplicado:
- *
- *   4 x $20.00                  $80.00
- *   PROMO PAPITAS 4 X 3        -$20.00   ← negrita
- */
 function productLines(item, cols) {
     const clave        = item.sku  || '---';
     const nombre       = item.name || '';
     const qty          = item.quantity;
     const precio       = Number(item.price).toFixed(2);
-    // Importe sin descuento (precio catálogo × cantidad)
     const importeBruto = (qty * Number(item.price)).toFixed(2);
     const discount     = Number(item.discount_amount ?? 0);
     const lines        = [];
 
-    /* Encabezado de producto */
     if (cols >= 48) {
         const claveCol = 10;
         const nameCol  = cols - claveCol - 1;
@@ -86,20 +75,14 @@ function productLines(item, cols) {
         lines.push(...enc(pad(nombre, cols)), LF);
     }
 
-    /* Fila cantidad × precio  →  importe bruto */
     lines.push(...twoCol(`${qty} x $${precio}`, `$${importeBruto}`, cols));
 
-    /* ── Línea de PROMOCIÓN ──────────────────────────────────────────────
-       Se muestra en negrita y sin sangría para que destaque visualmente.
-       Ejemplo:
-         PROMO PAPITAS 4 X 3      -$20.00
-    ─────────────────────────────────────────────────────────────────── */
     if (discount > 0) {
         const label = (item.offer_label || 'PROMO').toUpperCase();
         lines.push(
-            ESC, 0x45, 0x01,                                       // negrita ON
+            ESC, 0x45, 0x01,
             ...twoCol(label, `-$${discount.toFixed(2)}`, cols),
-            ESC, 0x45, 0x00,                                       // negrita OFF
+            ESC, 0x45, 0x00,
         );
     }
 
@@ -108,22 +91,6 @@ function productLines(item, cols) {
 
 /* ══════════════════════════════════════════════════════════════════════════
    buildSaleTicket
-   @param {object} sale
-     sale.folio              string
-     sale.created_at         string ISO
-     sale.payment_method     'cash' | 'card'
-     sale.amount_paid        number
-     sale.change             number
-     sale.items[]            { sku, name, quantity, price, subtotal,
-                               discount_amount?, offer_label? }
-     sale.subtotal           number  — precio bruto (antes de descuentos)
-     sale.discount           number  — descuento total
-     sale.total              number  — lo que realmente se cobró
-     sale.customer_name      string  — nombre del cliente (opcional)
-     sale.cashier            string
-     sale.caja               string  — opcional, no se imprime si está vacío
-   @param {'58'|'80'} width
-   @returns {Uint8Array}
 ════════════════════════════════════════════════════════════════════════════ */
 export function buildSaleTicket(sale, width = '58') {
     const cols = width === '80' ? 48 : 32;
@@ -142,7 +109,6 @@ export function buildSaleTicket(sale, width = '58') {
         } catch { return ''; }
     })();
 
-    /* ── Cálculo de totales ──────────────────────────────────────────── */
     const rawSubtotal = (sale.items || []).reduce(
         (s, i) => s + Number(i.quantity) * Number(i.price), 0
     );
@@ -159,27 +125,18 @@ export function buildSaleTicket(sale, width = '58') {
     const hayPromo    = discount > 0;
 
     const cmd = [
-        /* Init */
         ESC, 0x40,
         ESC, 0x74, 0x01,
-
-        /* Encabezado */
         ESC, 0x61, 0x01,
         GS,  0x21, 0x11,
         ...enc('TICKET DE VENTA'), LF,
         GS,  0x21, 0x00,
         ...BLANK,
-
-        /* Folio, fecha, hora */
         ESC, 0x61, 0x00,
         ...twoCol(`Folio: ${sale.folio ?? ''}`, fecha, cols),
-        // Nombre del cliente (fallback: "Publico en general")
         ...twoCol(`Cliente: ${sale.customer_name || 'Publico en general'}`, hora, cols),
-        // Caja solo se imprime si tiene valor
         ...(sale.caja ? twoCol(`Caja: ${sale.caja}`, '', cols) : []),
         ...twoCol(`Cajero: ${sale.cashier ?? ''}`, '', cols),
-
-        /* Productos */
         ...sep(cols),
         ...(cols >= 48
             ? [...enc(pad('CLAVE', 10) + ' ' + pad('DESCRIPCION', cols - 10 - 1)), LF]
@@ -187,46 +144,23 @@ export function buildSaleTicket(sale, width = '58') {
         ),
         ...twoCol('CANT x P.U.', 'IMPORTE', cols),
         ...sep(cols),
-
         ...(sale.items || []).flatMap(item => productLines(item, cols)),
-
-        /* ── Totales ─────────────────────────────────────────────────────
-           Subtotal  (precio bruto)          siempre
-           Descuentos  -$XX.XX              solo si hay promo
-           ─────────────
-           TOTAL                             siempre (en negrita)
-        ──────────────────────────────────────────────────────────────── */
         ...sep(cols),
-
         ...twoCol('Subtotal:', `$${subtotal.toFixed(2)}`, cols),
-
-        // Descuento total — solo visible cuando hay al menos una promoción
-        ...(hayPromo
-            ? twoCol('Descuentos:', `-$${discount.toFixed(2)}`, cols)
-            : []
-        ),
-
-        // Separador fino antes del total cuando hay descuento
+        ...(hayPromo ? twoCol('Descuentos:', `-$${discount.toFixed(2)}`, cols) : []),
         ...(hayPromo ? sep(cols) : []),
-
         ESC, 0x45, 0x01,
         ...twoCol('TOTAL:', `$${total.toFixed(2)}`, cols),
         ESC, 0x45, 0x00,
-
         ...sep(cols),
         ...twoCol(`${metodoPago}:`, `$${paid.toFixed(2)}`, cols),
-
         ...(sale.payment_method !== 'card'
             ? twoCol('Cambio:', `$${change.toFixed(2)}`, cols)
             : []
         ),
-
-        /* Pie */
         ...BLANK,
         ...centered('Gracias por su compra', cols),
         ...BLANK,
-
-        /* Corte */
         LF, LF, LF,
         GS, 0x56, 0x01,
     ];
@@ -255,4 +189,29 @@ export function buildTestTicket(deviceName, width = '58') {
         GS, 0x56, 0x01,
     ];
     return new Uint8Array(cmd);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   openCashDrawer
+   ───────────────────────────────────────────────────────────────────────────
+   Genera el pulso ESC/POS estándar para abrir el cajón de dinero.
+
+   Comando: ESC p <pin> <on-time> <off-time>
+     ESC p = 0x1B 0x70
+     pin   = 0x00 (pin 2) — el más común en impresoras térmicas.
+             Si no funciona, probar 0x01 (pin 5).
+     on-time  = 0x19 (25 × 2ms = 50ms de pulso)
+     off-time = 0xFA (250 × 2ms = 500ms de pausa)
+
+   Este comando es compatible con la mayoría de impresoras térmicas ESC/POS:
+   Epson TM, Bixolon SRP, POS-5890Z, y clones chinos.
+
+   Se llama por separado del ticket — no necesita inicializar la impresora
+   (ESC @) porque puede enviarse solo, antes o después del ticket.
+   ══════════════════════════════════════════════════════════════════════════ */
+export function buildDrawerPulse() {
+    return new Uint8Array([
+        ESC, 0x70, 0x00, 0x19, 0xFA,   // pin 2 (más común)
+        ESC, 0x70, 0x01, 0x19, 0xFA,   // pin 5 (fallback por si acaso)
+    ]);
 }

@@ -4,14 +4,11 @@ import CategoryTabs from '../components/CategoryTabs';
 import ProductCard from '../components/ProductCard';
 import TicketSidebar from '../components/TicketSidebar';
 import BottomNav from '../components/BottomNav';
-import { inventoryService as productService, offersService } from '../services/api';
+import { useProductCatalog } from '../hooks/useProductCatalog';
 
 const LS_CART = 'numa_pos_cart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers de oferta
-// ─────────────────────────────────────────────────────────────────────────────
-
+/* ── Helpers de oferta (sin cambios) ──────────────────────────────────── */
 function findApplicableOffer(product, offers) {
     const now = new Date();
     const currentDay  = now.getDay();
@@ -61,20 +58,33 @@ function applyOfferToCart(cart, productId, offer) {
     });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POSPage
-// ─────────────────────────────────────────────────────────────────────────────
+/* ══════════════════════════════════════════════════════════════════════════
+   POSPage
+══════════════════════════════════════════════════════════════════════════ */
 export default function POSPage() {
     const [activeCategory, setActiveCategory] = useState(null);
-    const [products,       setProducts]       = useState([]);
-    const [offers,         setOffers]         = useState([]);
-    const [loading,        setLoading]        = useState(true);
     const [showToast,      setShowToast]      = useState(false);
     const [selectedCaja,   setSelectedCaja]   = useState(null);
     const [selectedSerie,  setSelectedSerie]  = useState(null);
     const [mobileView,     setMobileView]     = useState('products');
     const [pendingOffer,   setPendingOffer]   = useState(null);
 
+    /* ── Catálogo con caché local ─────────────────────────────────────────
+       - products y offers se cargan desde localStorage en 0ms
+       - loading=true solo cuando NO hay caché previo (primera vez ever)
+       - refreshing=true durante refresco en segundo plano (no bloquea UI)
+       - invalidate() se llama al completar una venta para actualizar stock
+    ─────────────────────────────────────────────────────────────────────── */
+    const {
+        products,
+        offers,
+        loading,
+        refreshing,
+        error: catalogError,
+        invalidate: invalidateCatalog,
+    } = useProductCatalog();
+
+    /* ── Carrito persistido en localStorage ─────────────────────────────── */
     const [cart, setCart] = useState(() => {
         try {
             const stored = localStorage.getItem(LS_CART);
@@ -86,27 +96,11 @@ export default function POSPage() {
         try { localStorage.setItem(LS_CART, JSON.stringify(cart)); } catch { }
     }, [cart]);
 
-    useEffect(() => { loadProducts(); loadOffers(); }, []);
-
-    const loadProducts = async () => {
-        setLoading(true);
-        try { setProducts(await productService.getAll()); }
-        catch (err) { console.error('Error al cargar productos:', err); }
-        finally { setLoading(false); }
-    };
-
-    const loadOffers = async () => {
-        try {
-            const data = await offersService.getAll({ status: 'active' });
-            setOffers(Array.isArray(data) ? data : []);
-        } catch (err) { console.error('Error al cargar ofertas:', err); }
-    };
-
     const filteredProducts = activeCategory
         ? products.filter(p => p.category_id === activeCategory)
         : products;
 
-    // ── Agregar producto ──────────────────────────────────────────────────────
+    /* ── Agregar producto ─────────────────────────────────────────────────── */
     const handleAddProduct = (product) => {
         setCart(prev => {
             const existing = prev.find(i => i.id === product.id);
@@ -126,12 +120,11 @@ export default function POSPage() {
         }
     };
 
-    const handleApplyOffer = () => {
+    const handleApplyOffer  = () => {
         if (!pendingOffer) return;
         setCart(prev => applyOfferToCart(prev, pendingOffer.productId, pendingOffer.offer));
         setPendingOffer(null);
     };
-
     const handleDismissOffer = () => setPendingOffer(null);
 
     const handleUpdateQuantity = (id, amount) => {
@@ -144,10 +137,8 @@ export default function POSPage() {
         );
     };
 
-    // ── Quitar un producto individual del carrito ─────────────────────────────
     const handleRemoveItem = (itemId) => {
         setCart(prev => prev.filter(item => item.id !== itemId));
-        // Si la oferta pendiente era para ese producto, la descartamos
         setPendingOffer(prev => prev?.productId === itemId ? null : prev);
     };
 
@@ -155,6 +146,12 @@ export default function POSPage() {
         setCart([]);
         setPendingOffer(null);
         try { localStorage.removeItem(LS_CART); } catch { }
+    };
+
+    /* ── Al completar una venta: invalidar caché en segundo plano ────────── */
+    const handleSaleSuccess = () => {
+        // No bloqueamos el UI — el stock se actualiza en segundo plano
+        invalidateCatalog();
     };
 
     const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
@@ -165,7 +162,7 @@ export default function POSPage() {
         onUpdateQuantity: handleUpdateQuantity,
         onRemoveItem:     handleRemoveItem,
         onClearCart:      handleClearCart,
-        onSaleSuccess:    loadProducts,
+        onSaleSuccess:    handleSaleSuccess,
         onAddProduct:     handleAddProduct,
         cajaId:           selectedCaja?.id   ?? null,
         cajaNombre:       selectedCaja?.name ?? '',
@@ -190,12 +187,26 @@ export default function POSPage() {
 
                 <section className="flex-[3] flex flex-col border-r border-outline-variant bg-slate-50">
                     {loading ? (
+                        /* Primera carga sin caché — solo ocurre la primera vez ever */
                         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-on-surface-variant">
                             <span className="material-symbols-outlined text-[48px] animate-spin">refresh</span>
                             <span className="text-xl font-bold">Cargando catálogo...</span>
                         </div>
+                    ) : catalogError && products.length === 0 ? (
+                        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-on-surface-variant px-8 text-center">
+                            <span className="material-symbols-outlined text-[48px] text-error">wifi_off</span>
+                            <p className="text-base font-bold text-error">Sin conexión</p>
+                            <p className="text-sm text-on-surface-variant">{catalogError}</p>
+                        </div>
                     ) : (
-                        <div className="flex-1 overflow-y-auto p-md grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-md custom-scrollbar bg-slate-50">
+                        <div className="flex-1 overflow-y-auto p-md grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-md custom-scrollbar bg-slate-50 relative">
+                            {/* Indicador de refresco silencioso — no bloquea, solo informa */}
+                            {refreshing && (
+                                <div className="absolute top-2 right-3 flex items-center gap-1.5 text-[11px] text-on-surface-variant/60 bg-surface-bright/80 px-2 py-1 rounded-full backdrop-blur-sm z-10">
+                                    <span className="material-symbols-outlined text-[13px] animate-spin">sync</span>
+                                    Actualizando catálogo…
+                                </div>
+                            )}
                             {filteredProducts.length === 0 ? (
                                 <div className="col-span-full flex flex-col items-center justify-center text-on-surface-variant py-12 gap-4">
                                     <span className="material-symbols-outlined text-[64px] text-outline-variant">inventory_2</span>
@@ -227,6 +238,10 @@ export default function POSPage() {
                             grid_view
                         </span>
                         Productos
+                        {/* Indicador de refresco en móvil */}
+                        {refreshing && (
+                            <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-secondary/60 animate-pulse" />
+                        )}
                     </button>
 
                     <button
@@ -259,7 +274,12 @@ export default function POSPage() {
                                     <span className="text-xl font-bold">Cargando...</span>
                                 </div>
                             ) : (
-                                <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 custom-scrollbar">
+                                <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 custom-scrollbar relative">
+                                    {refreshing && (
+                                        <div className="absolute top-1 right-2 flex items-center gap-1 text-[10px] text-on-surface-variant/50 z-10">
+                                            <span className="material-symbols-outlined text-[12px] animate-spin">sync</span>
+                                        </div>
+                                    )}
                                     {filteredProducts.length === 0 ? (
                                         <div className="col-span-full flex flex-col items-center justify-center text-on-surface-variant py-12 gap-4">
                                             <span className="material-symbols-outlined text-[64px] text-outline-variant">inventory_2</span>

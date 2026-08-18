@@ -7,9 +7,16 @@
      - web       → navigator.bluetooth (Web Bluetooth API)
      - capacitor → capacitorBtAdapter.js (BLE nativo Android)
      - electron  → electronPrinterAdapter.js (IPC → main process → Spooler)
+
+   CAJÓN DE DINERO:
+   - openDrawer()        exportada — abre el cajón manualmente (botón en TopAppBar)
+   - _sendTicket()       llama openDrawer() automáticamente si:
+                           · device.config.openDrawer === true
+                           · payment_method === 'cash'
+                           · isReprint !== true
    ═══════════════════════════════════════════════════════════════════════════ */
 
-import { buildSaleTicket } from './ticketBuilder';
+import { buildSaleTicket, buildDrawerPulse } from './ticketBuilder';
 import { isCapacitor, isElectron } from './runtimeEnv';
 import * as capBt from './capacitorBtAdapter';
 import * as elPrinter from './electronPrinterAdapter';
@@ -25,8 +32,7 @@ export const PRINTER_PROFILES = [
 
 export const PRINTER_SERVICE_UUIDS = PRINTER_PROFILES.map(p => p.service);
 
-/* ── Caché de dispositivos y perfiles (rama WEB) ─────────────────────────── */
-const _deviceCache = new Map();
+const _deviceCache  = new Map();
 const _profileCache = new Map();
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -86,11 +92,8 @@ async function findWritableCharacteristic(server, address) {
         server.getPrimaryService(profile.service), 3000, `getPrimaryService ${profile.service}`
       );
       let chr = null;
-
       try {
-        const c = await withTimeout(
-          svc.getCharacteristic(profile.chr), 3000, `getCharacteristic ${profile.chr}`
-        );
+        const c = await withTimeout(svc.getCharacteristic(profile.chr), 3000, `getCharacteristic ${profile.chr}`);
         if (c.properties.write || c.properties.writeWithoutResponse) chr = c;
       } catch {
         try {
@@ -98,10 +101,8 @@ async function findWritableCharacteristic(server, address) {
           chr = all.find(c => c.properties.write || c.properties.writeWithoutResponse) ?? null;
         } catch { /* noop */ }
       }
-
       if (chr) {
         _profileCache.set(address, { service: profile.service, chr: chr.uuid });
-        console.info(`[Printer] Perfil encontrado → service: ${profile.service} chr: ${chr.uuid}`);
         return chr;
       }
     } catch (e) {
@@ -109,42 +110,27 @@ async function findWritableCharacteristic(server, address) {
     }
   }
 
-  throw new Error(
-    'No se encontró servicio de impresión compatible. ' +
-    'Verifica que la impresora esté encendida y en rango.'
-  );
+  throw new Error('No se encontró servicio de impresión compatible. Verifica que la impresora esté encendida y en rango.');
 }
 
 async function ensureConnection(btRef, address) {
-  if (btRef.gatt.connected) {
-    console.info('[Printer] Conexión GATT activa, reutilizando');
-    return btRef.gatt;
-  }
-
+  if (btRef.gatt.connected) return btRef.gatt;
   try { btRef.gatt.disconnect(); } catch { /* noop */ }
   await sleep(800);
-
   let server = null;
-
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      console.info(`[Printer] Conectando GATT (intento ${attempt}/3)...`);
       server = await btRef.gatt.connect();
       await sleep(500);
-      console.info('[Printer] Conexión GATT establecida');
       return server;
     } catch (e) {
       console.warn(`[Printer] Intento ${attempt}/3 fallido:`, e.message);
       if (attempt < 3) await sleep(1500 * attempt);
     }
   }
-
   _deviceCache.delete(address);
   _profileCache.delete(address);
-  throw new Error(
-    'Impresora desconectada. Abre Ajustes → Dispositivos, ' +
-    'toca el ícono de actualizar junto a la impresora e intenta de nuevo.'
-  );
+  throw new Error('Impresora desconectada. Abre Ajustes → Dispositivos, toca el ícono de actualizar e intenta de nuevo.');
 }
 
 async function writeChunked(chr, data, btRef, address) {
@@ -155,27 +141,18 @@ async function writeChunked(chr, data, btRef, address) {
 
   for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
     const chunk = data.slice(offset, offset + CHUNK_SIZE);
-
-    const writeWithTimeout = (writeFn) =>
-      Promise.race([
-        writeFn(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout en chunk offset ${offset}`)), WRITE_TIMEOUT)
-        ),
-      ]);
+    const writeWithTimeout = (fn) => Promise.race([
+      fn(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout en chunk offset ${offset}`)), WRITE_TIMEOUT)),
+    ]);
 
     let success = false;
-
     try {
-      if (useWrite) {
-        await writeWithTimeout(() => chr.writeValue(chunk));
-      } else {
-        await writeWithTimeout(() => chr.writeValueWithoutResponse(chunk));
-      }
+      if (useWrite) { await writeWithTimeout(() => chr.writeValue(chunk)); }
+      else          { await writeWithTimeout(() => chr.writeValueWithoutResponse(chunk)); }
       success = true;
     } catch (e) {
       console.warn(`[Printer] Write falló en offset ${offset}:`, e.message);
-
       if (e.message?.includes('disconnected') || e.message?.includes('GATT')) {
         try {
           try { btRef.gatt.disconnect(); } catch { /* noop */ }
@@ -184,12 +161,8 @@ async function writeChunked(chr, data, btRef, address) {
           await sleep(300);
           _profileCache.delete(address);
           chr = await findWritableCharacteristic(server, address);
-
-          if (useWrite) {
-            await writeWithTimeout(() => chr.writeValue(chunk));
-          } else {
-            await writeWithTimeout(() => chr.writeValueWithoutResponse(chunk));
-          }
+          if (useWrite) { await writeWithTimeout(() => chr.writeValue(chunk)); }
+          else          { await writeWithTimeout(() => chr.writeValueWithoutResponse(chunk)); }
           success = true;
         } catch (reconnErr) {
           throw new Error(`GATT se desconectó en offset ${offset} y no se pudo reconectar: ${reconnErr.message}`);
@@ -199,22 +172,15 @@ async function writeChunked(chr, data, btRef, address) {
 
     if (!success) {
       try {
-        if (useWrite) {
-          await writeWithTimeout(() => chr.writeValueWithoutResponse(chunk));
-        } else {
-          await writeWithTimeout(() => chr.writeValue(chunk));
-        }
+        if (useWrite) { await writeWithTimeout(() => chr.writeValueWithoutResponse(chunk)); }
+        else          { await writeWithTimeout(() => chr.writeValue(chunk)); }
       } catch (e2) {
         throw new Error(`Error al enviar datos en offset ${offset}/${data.length}: ${e2.message}`);
       }
     }
 
-    if (offset + CHUNK_SIZE < data.length) {
-      await sleep(CHUNK_DELAY);
-    }
+    if (offset + CHUNK_SIZE < data.length) await sleep(CHUNK_DELAY);
   }
-
-  console.info('[Printer] Envío completo');
 }
 
 async function sendBytesWeb(btRef, data, address) {
@@ -224,7 +190,6 @@ async function sendBytesWeb(btRef, data, address) {
     await writeChunked(chr, data, btRef, address);
   } catch (e) {
     _profileCache.delete(address);
-    console.error('[Printer] Error durante envío:', e.message);
     throw e;
   }
 }
@@ -234,12 +199,8 @@ export async function sendToPrinterDirect(btDevice, data) {
   if (btDevice.gatt.connected) {
     server = btDevice.gatt;
   } else {
-    try {
-      server = await btDevice.gatt.connect();
-      await sleep(300);
-    } catch (e) {
-      throw new Error(`No se pudo conectar al GATT: ${e.message}`);
-    }
+    try { server = await btDevice.gatt.connect(); await sleep(300); }
+    catch (e) { throw new Error(`No se pudo conectar al GATT: ${e.message}`); }
   }
   const address = btDevice.id ?? btDevice.name ?? 'test';
   const chr = await findWritableCharacteristic(server, address);
@@ -255,10 +216,6 @@ async function sendBytesCapacitor(address, data) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ── RAMA ELECTRON ──
-   En Electron, "address" es el nombre de la impresora en Windows
-   (ej. "Termica58" o "\\PC-CAJA\Termica58"), guardado en device.address.
-   Los bytes ESC/POS se mandan al main process via IPC y desde ahí al
-   Spooler de Windows — sin chunks, sin GATT, sin BLE.
    ═══════════════════════════════════════════════════════════════════════════ */
 async function sendBytesElectron(printerName, data) {
   await elPrinter.writeBytes(printerName, data);
@@ -266,13 +223,9 @@ async function sendBytesElectron(printerName, data) {
 
 /* ── Despachador único ───────────────────────────────────────────────────── */
 async function sendBytes(btRef, data, address) {
-  if (isElectron()) {
-    await sendBytesElectron(address, data);
-  } else if (isCapacitor()) {
-    await sendBytesCapacitor(address, data);
-  } else {
-    await sendBytesWeb(btRef, data, address);
-  }
+  if (isElectron())   { await sendBytesElectron(address, data); }
+  else if (isCapacitor()) { await sendBytesCapacitor(address, data); }
+  else                { await sendBytesWeb(btRef, data, address); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -285,90 +238,136 @@ async function getActivePrinter() {
   const printer = devices.find(d => d.config?.autoPrint === true);
   if (!printer) return null;
 
-  // En Electron, tanto 'windows' como 'bluetooth' usan el nombre de impresora
-  // guardado en printer.address — no hay objeto btRef que resolver.
-  if (isElectron()) {
-    return { device: printer, btRef: null };
-  }
-
-  if (printer.connectionType === 'windows') return { device: printer, btRef: null };
-
-  if (isCapacitor()) {
-    return { device: printer, btRef: null };
-  }
+  if (isElectron())                             return { device: printer, btRef: null };
+  if (printer.connectionType === 'windows')     return { device: printer, btRef: null };
+  if (isCapacitor())                            return { device: printer, btRef: null };
 
   let btRef = _deviceCache.get(printer.address) ?? null;
-
   if (!btRef && navigator.bluetooth?.getDevices) {
     try {
       const known = await navigator.bluetooth.getDevices();
-      btRef = known.find(d =>
-        d.id === printer.address || d.name === printer.address
-      ) ?? null;
-      if (btRef) {
-        _deviceCache.set(printer.address, btRef);
-        console.info('[Printer] Dispositivo recuperado via getDevices()');
-      }
-    } catch (e) {
-      console.warn('[Printer] getDevices() falló:', e.message);
-    }
+      btRef = known.find(d => d.id === printer.address || d.name === printer.address) ?? null;
+      if (btRef) _deviceCache.set(printer.address, btRef);
+    } catch (e) { console.warn('[Printer] getDevices() falló:', e.message); }
   }
 
   return { device: printer, btRef };
 }
 
-/* ── Enviar ticket ───────────────────────────────────────────────────────── */
-async function _sendTicket(saleData, device, btRef) {
-  const width = device.config?.ticketWidth ?? '58';
-  const bytes = buildSaleTicket(saleData, width);
+/* ── Busca CUALQUIER impresora configurada (para apertura de cajón manual) ─ */
+async function getAnyPrinterWithDrawer() {
+  let devices = [];
+  try { devices = JSON.parse(localStorage.getItem('pos_devices') || '[]'); } catch { return null; }
+
+  // Primero la que tiene autoPrint (la principal), luego cualquier otra con cajón
+  const printer =
+    devices.find(d => d.config?.openDrawer === true && d.config?.autoPrint === true) ??
+    devices.find(d => d.config?.openDrawer === true) ??
+    null;
+
+  if (!printer) return null;
+
+  if (isElectron() || printer.connectionType === 'windows' || isCapacitor()) {
+    return { device: printer, btRef: null };
+  }
+
+  let btRef = _deviceCache.get(printer.address) ?? null;
+  if (!btRef && navigator.bluetooth?.getDevices) {
+    try {
+      const known = await navigator.bluetooth.getDevices();
+      btRef = known.find(d => d.id === printer.address || d.name === printer.address) ?? null;
+      if (btRef) _deviceCache.set(printer.address, btRef);
+    } catch { /* noop */ }
+  }
+  return { device: printer, btRef };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   _sendDrawerPulse  —  Envía el pulso de apertura a la impresora dada
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function _sendDrawerPulse(device, btRef) {
+  const pulse = buildDrawerPulse();
 
   if (isElectron()) {
-    // En Electron toda impresora (USB o red) se identifica por nombre en Windows
-    if (!device.address) {
-      return {
-        ok: false,
-        error: 'No hay impresora configurada. Abre Ajustes → Dispositivos y agrega una.',
-      };
-    }
-    try {
-      await sendBytes(null, bytes, device.address);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
+    if (!device.address) throw new Error('No hay impresora configurada.');
+    await sendBytes(null, pulse, device.address);
+    return;
   }
 
   if (device.connectionType === 'bluetooth') {
     if (isCapacitor()) {
-      if (!device.address) {
-        return {
-          ok: false,
-          error: 'Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.',
-        };
-      }
-      try {
-        await sendBytes(null, bytes, device.address);
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, error: e.message };
-      }
+      if (!device.address) throw new Error('Impresora no encontrada.');
+      await sendBytes(null, pulse, device.address);
+      return;
     }
-
-    if (!btRef) {
-      return {
-        ok: false,
-        error: 'Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.',
-      };
-    }
-    await sendBytes(btRef, bytes, device.address);
-    return { ok: true };
+    if (!btRef) throw new Error('Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.');
+    await sendBytes(btRef, pulse, device.address);
+    return;
   }
 
   if (device.connectionType === 'windows') {
-    return { ok: true };
+    await sendBytes(null, pulse, device.address);
+    return;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   _sendTicket  —  Envía el ticket y, si corresponde, el pulso de cajón
+   ───────────────────────────────────────────────────────────────────────────
+   @param {object}  saleData
+   @param {object}  device
+   @param {any}     btRef
+   @param {boolean} isReprint  — si true, NUNCA abre el cajón
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function _sendTicket(saleData, device, btRef, isReprint = false) {
+  const width = device.config?.ticketWidth ?? '58';
+  const bytes = buildSaleTicket(saleData, width);
+
+  // ── Enviar ticket ─────────────────────────────────────────────────────────
+  if (isElectron()) {
+    if (!device.address) return { ok: false, error: 'No hay impresora configurada. Abre Ajustes → Dispositivos y agrega una.' };
+    try { await sendBytes(null, bytes, device.address); }
+    catch (e) { return { ok: false, error: e.message }; }
+
+  } else if (device.connectionType === 'bluetooth') {
+    if (isCapacitor()) {
+      if (!device.address) return { ok: false, error: 'Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.' };
+      try { await sendBytes(null, bytes, device.address); }
+      catch (e) { return { ok: false, error: e.message }; }
+    } else {
+      if (!btRef) return { ok: false, error: 'Impresora no encontrada. Abre Ajustes → Dispositivos y vuelve a vincularla.' };
+      try { await sendBytes(btRef, bytes, device.address); }
+      catch (e) { return { ok: false, error: e.message }; }
+    }
+
+  } else if (device.connectionType === 'windows') {
+    // En web sin Electron, la impresión Windows va por ventana de sistema;
+    // el ticket ya se manejó en el modal. Aquí solo procesamos el cajón.
+
+  } else {
+    return { ok: false, error: 'Tipo de conexión no reconocido.' };
   }
 
-  return { ok: false, error: 'Tipo de conexión no reconocido.' };
+  // ── Abrir cajón automáticamente ───────────────────────────────────────────
+  // Condiciones: toggle activo + efectivo + no es reimpresión
+  const shouldOpenDrawer =
+    device.config?.openDrawer === true &&
+    saleData.payment_method === 'cash' &&
+    !isReprint;
+
+  if (shouldOpenDrawer) {
+    try {
+      await sleep(200); // pequeña pausa para que la impresora termine de procesar el ticket
+      await _sendDrawerPulse(device, btRef);
+      console.info('[Printer] Cajón abierto automáticamente.');
+    } catch (e) {
+      // El ticket ya se imprimió — el fallo de cajón es un error secundario,
+      // no queremos que oculte el éxito de la venta.
+      console.warn('[Printer] No se pudo abrir el cajón:', e.message);
+    }
+  }
+
+  return { ok: true };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -380,7 +379,7 @@ export async function printSaleTicket(saleData) {
     const result = await getActivePrinter();
     if (!result) return { ok: false, error: 'No hay impresora con impresión automática habilitada.' };
     const { device, btRef } = result;
-    return await _sendTicket(saleData, device, btRef);
+    return await _sendTicket(saleData, device, btRef, false); // isReprint = false
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -400,9 +399,7 @@ export async function reprintSaleTicket(sale, items = []) {
       payment_method: sale.payment_method ?? 'cash',
       amount_paid: Number(sale.amount_paid ?? total),
       change: Number(sale.change_amount ?? sale.change ?? 0),
-      total,
-      subtotal: total,
-      discount: 0,
+      total, subtotal: total, discount: 0,
       customer_name: sale.customer_name ?? '',
       cashier: sale.cashier_name ?? '',
       caja: sale.caja_name ?? '',
@@ -419,26 +416,42 @@ export async function reprintSaleTicket(sale, items = []) {
       }),
     };
 
-    return await _sendTicket(saleData, device, btRef);
+    return await _sendTicket(saleData, device, btRef, true); // isReprint = true → nunca abre cajón
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   openDrawer  —  Abre el cajón manualmente (botón en TopAppBar)
+   ───────────────────────────────────────────────────────────────────────────
+   Busca la impresora con openDrawer habilitado y le manda el pulso.
+   No imprime ticket.
+   @returns {Promise<{ ok: boolean, error?: string }>}
+   ═══════════════════════════════════════════════════════════════════════════ */
+export async function openDrawer() {
+  try {
+    const result = await getAnyPrinterWithDrawer();
+    if (!result) {
+      return { ok: false, error: 'No hay impresora con cajón configurado. Activa "Abrir cajón de dinero" en Ajustes → Dispositivos.' };
+    }
+    const { device, btRef } = result;
+    await _sendDrawerPulse(device, btRef);
+    return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 }
 
 export function cacheBtDevice(address, btDevice) {
-  if (isCapacitor() || isElectron()) return; // no-op en entornos nativos
+  if (isCapacitor() || isElectron()) return;
   if (address && btDevice) _deviceCache.set(address, btDevice);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   reconnectBTPrinters
-   ─────────────────────────────────────────────────────────────────────────
-   ELECTRON: las impresoras Windows no necesitan "reconexión" — el Spooler
-   de Windows maneja la conexión física. Esta función es un no-op en ese
-   entorno (retorna inmediatamente sin errores).
+   reconnectBTPrinters + BT Watcher (sin cambios)
    ═══════════════════════════════════════════════════════════════════════════ */
 export async function reconnectBTPrinters() {
-  // En Electron no hay BLE que reconectar
   if (isElectron()) {
     _btWatcherStatus.missingDevices = [];
     _btWatcherStatus.lastCheckedAt = Date.now();
@@ -446,26 +459,15 @@ export async function reconnectBTPrinters() {
   }
 
   let saved = [];
-  try {
-    saved = JSON.parse(localStorage.getItem('pos_devices') || '[]');
-  } catch { return; }
-
+  try { saved = JSON.parse(localStorage.getItem('pos_devices') || '[]'); } catch { return; }
   const btPrinters = saved.filter(d => d.connectionType === 'bluetooth' && d.address);
-  if (btPrinters.length === 0) {
-    _btWatcherStatus.missingDevices = [];
-    return;
-  }
+  if (btPrinters.length === 0) { _btWatcherStatus.missingDevices = []; return; }
 
   if (isCapacitor()) {
     const missing = [];
     for (const printer of btPrinters) {
-      try {
-        await capBt.connect(printer.address);
-        console.info(`[BT] ✓ Auto-reconectado (Capacitor): ${printer.name}`);
-      } catch (e) {
-        console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`);
-        missing.push(printer);
-      }
+      try { await capBt.connect(printer.address); console.info(`[BT] ✓ Auto-reconectado (Capacitor): ${printer.name}`); }
+      catch (e) { console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`); missing.push(printer); }
     }
     _btWatcherStatus.missingDevices = missing;
     _btWatcherStatus.lastCheckedAt = Date.now();
@@ -473,145 +475,75 @@ export async function reconnectBTPrinters() {
     return;
   }
 
-  // ── Rama WEB ──────────────────────────────────────────────────────────
-  if (!navigator.bluetooth?.getDevices) {
-    console.info('[BT] getDevices no disponible en este navegador.');
-    return;
-  }
+  if (!navigator.bluetooth?.getDevices) { console.info('[BT] getDevices no disponible.'); return; }
 
   try {
     const known = await navigator.bluetooth.getDevices();
     const missing = [];
-
     for (const printer of btPrinters) {
-      const found = known.find(
-        d => d.id === printer.address || d.name === printer.address
-      );
-
-      if (!found) {
-        missing.push(printer);
-        continue;
-      }
-
+      const found = known.find(d => d.id === printer.address || d.name === printer.address);
+      if (!found) { missing.push(printer); continue; }
       try {
-        if (!found.gatt.connected) {
-          try { found.gatt.disconnect(); } catch { /* noop */ }
-          await new Promise(r => setTimeout(r, 400));
-        }
+        if (!found.gatt.connected) { try { found.gatt.disconnect(); } catch { /* noop */ } await sleep(400); }
         await found.gatt.connect();
         cacheBtDevice(printer.address, found);
         console.info(`[BT] ✓ Auto-reconectado: ${printer.name}`);
-      } catch (e) {
-        console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`);
-        missing.push(printer);
-      }
+      } catch (e) { console.info(`[BT] No se pudo conectar "${printer.name}": ${e.message}`); missing.push(printer); }
     }
-
     _btWatcherStatus.missingDevices = missing;
     _btWatcherStatus.lastCheckedAt = Date.now();
     _notifyBTWatcherListeners();
-  } catch (e) {
-    console.info('[BT] Error en getDevices():', e.message);
-  }
+  } catch (e) { console.info('[BT] Error en getDevices():', e.message); }
 }
 
-/* ── BT Watcher ──────────────────────────────────────────────────────────── */
 let _watcherStarted = false;
-let _reconnecting = false;
-
-const _btWatcherStatus = {
-  missingDevices: [],
-  lastCheckedAt: null,
-};
-
+let _reconnecting   = false;
+const _btWatcherStatus    = { missingDevices: [], lastCheckedAt: null };
 const _btWatcherListeners = new Set();
 
 function _notifyBTWatcherListeners() {
-  for (const cb of _btWatcherListeners) {
-    try { cb({ ..._btWatcherStatus }); } catch { /* noop */ }
-  }
+  for (const cb of _btWatcherListeners) { try { cb({ ..._btWatcherStatus }); } catch { /* noop */ } }
 }
 
 export function startBTWatcher() {
   if (_watcherStarted) return;
   if (typeof document === 'undefined') return;
   _watcherStarted = true;
-
   document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState !== 'visible') return;
-    if (_reconnecting) return;
+    if (document.visibilityState !== 'visible' || _reconnecting) return;
     _reconnecting = true;
-    try {
-      await reconnectBTPrinters();
-    } finally {
-      _reconnecting = false;
-    }
+    try { await reconnectBTPrinters(); } finally { _reconnecting = false; }
   });
-
   console.info('[BT] Watcher de reconexión activado (visibilitychange).');
 }
 
-export function onBTWatcherStatusChange(callback) {
-  if (typeof callback !== 'function') return () => {};
-  _btWatcherListeners.add(callback);
-  return () => _btWatcherListeners.delete(callback);
+export function onBTWatcherStatusChange(cb) {
+  if (typeof cb !== 'function') return () => {};
+  _btWatcherListeners.add(cb);
+  return () => _btWatcherListeners.delete(cb);
 }
 
-export function getBTWatcherStatus() {
-  return { ..._btWatcherStatus };
-}
+export function getBTWatcherStatus() { return { ..._btWatcherStatus }; }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   scanForPrinter
-   ─────────────────────────────────────────────────────────────────────────
-   ELECTRON: no hay escáner BLE. El modal llama getPrinters() del adapter
-   para listar las impresoras instaladas en Windows y el usuario elige una.
-   Esta función en Electron no tiene sentido — el modal no la llama en ese
-   entorno (ver PrinterSetupModal.jsx rama Electron).
-   ═══════════════════════════════════════════════════════════════════════════ */
 export async function scanForPrinter() {
   if (isCapacitor()) {
     const device = await capBt.requestDevice();
     return { id: device.deviceId, name: device.name, raw: null };
   }
-
   if (!navigator.bluetooth) {
-    throw new Error(
-      'Web Bluetooth no está disponible. Usa Chrome en Android (v56+). ' +
-      'En iOS no está soportado.'
-    );
+    throw new Error('Web Bluetooth no está disponible. Usa Chrome en Android (v56+). En iOS no está soportado.');
   }
-  const device = await navigator.bluetooth.requestDevice({
-    acceptAllDevices: true,
-    optionalServices: PRINTER_SERVICE_UUIDS,
-  });
+  const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: PRINTER_SERVICE_UUIDS });
   return { id: device.id ?? device.name ?? '', name: device.name ?? 'Impresora', raw: device };
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   sendTestTicket
-   ─────────────────────────────────────────────────────────────────────────
-   ELECTRON: manda los bytes directamente al adapter por IPC.
-   ═══════════════════════════════════════════════════════════════════════════ */
 export async function sendTestTicket(address, rawDevice, bytes) {
-  if (isElectron()) {
-    await elPrinter.writeBytes(address, bytes);
-    return;
-  }
-  if (isCapacitor()) {
-    await capBt.writeBytes(address, bytes);
-    return;
-  }
-  if (!rawDevice) {
-    throw new Error('No hay dispositivo Bluetooth vinculado.');
-  }
+  if (isElectron())   { await elPrinter.writeBytes(address, bytes); return; }
+  if (isCapacitor())  { await capBt.writeBytes(address, bytes);     return; }
+  if (!rawDevice) throw new Error('No hay dispositivo Bluetooth vinculado.');
   await sendToPrinterDirect(rawDevice, bytes);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   getWindowsPrinters  —  Exportado para que PrinterSetupModal lo use
-   en la rama Electron para mostrar el selector de impresoras del sistema.
-   ═══════════════════════════════════════════════════════════════════════════ */
 export async function getWindowsPrinters() {
   return elPrinter.getPrinters();
 }

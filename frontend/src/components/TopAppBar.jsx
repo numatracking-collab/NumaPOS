@@ -2,24 +2,20 @@
    TopAppBar.jsx
    Barra superior del POS.
    — Selector de caja: menú compacto con acordeón para elegir caja,
-     y accesos directos grandes a Movimiento de caja / Realizar corte.
+     y accesos directos grandes a Movimiento de caja / Realizar corte /
+     Abrir cajón (este último solo visible si hay impresora con cajón).
    — Selector de serie de facturación.
-   — Los menús desplegables se renderizan vía Portal a document.body para
-     evitar que contenedores con overflow (ej. la fila scrolleable en móvil)
-     los recorten. Ver DropdownPortal más abajo.
+   — Los menús desplegables se renderizan vía Portal a document.body.
 ═══════════════════════════════════════════════════════════════════════════ */
-import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { cajasService, seriesService as invoiceSeriesService } from '../services/api';
+import { openDrawer } from '../services/printerService';
 import MovimientoCajaModal from './MovimientoCajaModal';
 import CorteCajaModal      from './CorteCajaModal';
 
 /* ══════════════════════════════════════════════════════════════════════════
-   DropdownPortal
-   Renderiza su contenido directamente en document.body, posicionado con
-   `position: fixed` según la posición real del botón que lo dispara
-   (anchorRef). Esto evita que contenedores padre con overflow-x/y lo recorten
-   (problema típico en filas con scroll horizontal en móvil/Android WebView).
+   DropdownPortal — sin cambios
 ══════════════════════════════════════════════════════════════════════════ */
 function DropdownPortal({ anchorRef, open, onClose, width = 288, children }) {
     const portalRef = useRef(null);
@@ -27,29 +23,21 @@ function DropdownPortal({ anchorRef, open, onClose, width = 288, children }) {
 
     useLayoutEffect(() => {
         if (!open || !anchorRef.current) return;
-
         const update = () => {
             if (!anchorRef.current) return;
             const rect = anchorRef.current.getBoundingClientRect();
             const vw = window.innerWidth;
             const vh = window.innerHeight;
             const w  = Math.min(width, vw - 16);
-
             let left = Math.max(8, Math.min(rect.left, vw - w - 8));
             let top  = rect.bottom + 4;
-
-            // Si no cabe debajo, lo abrimos hacia arriba del botón.
             const maxDropHeight = Math.min(360, vh * 0.7);
             if (top + maxDropHeight > vh - 8 && rect.top - maxDropHeight > 8) {
                 top = rect.top - maxDropHeight - 4;
             }
-
             setPos({ top, left, width: w, maxHeight: maxDropHeight });
         };
-
         update();
-        // capture: true para detectar scroll de CUALQUIER contenedor anidado,
-        // no solo el de window (ej. la fila horizontal scrolleable en móvil).
         window.addEventListener('resize', update);
         window.addEventListener('scroll', update, true);
         return () => {
@@ -70,20 +58,8 @@ function DropdownPortal({ anchorRef, open, onClose, width = 288, children }) {
     }, [open, onClose, anchorRef]);
 
     if (!open || !pos) return null;
-
     return createPortal(
-        <div
-            ref={portalRef}
-            style={{
-                position: 'fixed',
-                top: pos.top,
-                left: pos.left,
-                width: pos.width,
-                maxHeight: pos.maxHeight,
-                zIndex: 9999,
-            }}
-            className="overflow-y-auto"
-        >
+        <div ref={portalRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, maxHeight: pos.maxHeight, zIndex: 9999 }} className="overflow-y-auto">
             {children}
         </div>,
         document.body
@@ -104,13 +80,11 @@ export default function TopAppBar({
     const [selectedCaja,  setSelectedCaja]  = useState(null);
     const [selectedSerie, setSelectedSerie] = useState(null);
 
-    // Dropdowns desktop / móvil
     const [cajaOpenD,  setCajaOpenD]  = useState(false);
     const [serieOpenD, setSerieOpenD] = useState(false);
     const [cajaOpenM,  setCajaOpenM]  = useState(false);
     const [serieOpenM, setSerieOpenM] = useState(false);
 
-    // Formularios inline de creación
     const [cajaForm,    setCajaForm]    = useState(false);
     const [serieForm,   setSerieForm]   = useState(false);
     const [newCajaName, setNewCajaName] = useState('');
@@ -119,11 +93,13 @@ export default function TopAppBar({
     const [cajaError,   setCajaError]   = useState('');
     const [serieError,  setSerieError]  = useState('');
 
-    // Modales de caja
     const [showMovimiento, setShowMovimiento] = useState(false);
     const [showCorte,      setShowCorte]      = useState(false);
 
-    // Refs de los botones que disparan cada dropdown (anclas para el portal)
+    /* ── Estado del cajón ────────────────────────────────────────────────── */
+    const [hasDrawerPrinter, setHasDrawerPrinter] = useState(false);
+    const [drawerStatus,     setDrawerStatus]     = useState('idle'); // idle | opening | ok | error
+
     const cajaBtnRefD  = useRef(null);
     const serieBtnRefD = useRef(null);
     const cajaBtnRefM  = useRef(null);
@@ -132,17 +108,46 @@ export default function TopAppBar({
     useEffect(() => {
         fetchCajas();
         fetchSeries();
+        checkDrawerPrinter();
     }, []);
 
-    /* ── Helpers de cierre ─────────────────────────────────────────────── */
+    /* ── Verifica si hay impresora con cajón configurado ────────────────── */
+    const checkDrawerPrinter = () => {
+        try {
+            const devices = JSON.parse(localStorage.getItem('pos_devices') || '[]');
+            setHasDrawerPrinter(devices.some(d => d.config?.openDrawer === true));
+        } catch {
+            setHasDrawerPrinter(false);
+        }
+    };
+
+    /* ── Abrir cajón manualmente ─────────────────────────────────────────── */
+    const handleOpenDrawer = useCallback(async () => {
+        if (drawerStatus === 'opening') return;
+        setDrawerStatus('opening');
+        closeCajaDropdown();
+        try {
+            const result = await openDrawer();
+            if (result.ok) {
+                setDrawerStatus('ok');
+                setTimeout(() => setDrawerStatus('idle'), 2000);
+            } else {
+                setDrawerStatus('error');
+                setTimeout(() => setDrawerStatus('idle'), 3000);
+                console.warn('[Cajón]', result.error);
+            }
+        } catch {
+            setDrawerStatus('error');
+            setTimeout(() => setDrawerStatus('idle'), 3000);
+        }
+    }, [drawerStatus]);
+
     const closeCajaDropdown  = () => { setCajaOpenD(false);  setCajaOpenM(false);  setCajaForm(false);  setNewCajaName(''); setCajaError(''); };
     const closeSerieDropdown = () => { setSerieOpenD(false); setSerieOpenM(false); setSerieForm(false); setNewSerie({ name: '', prefix: '', next_folio: '1' }); setSerieError(''); };
 
-    /* ── Abrir modales de caja ─────────────────────────────────────────── */
     const handleOpenMovimiento = () => { closeCajaDropdown(); setShowMovimiento(true); };
     const handleOpenCorte      = () => { closeCajaDropdown(); setShowCorte(true);      };
 
-    /* ── Cajas ─────────────────────────────────────────────────────────── */
     const fetchCajas = async () => {
         try {
             const data    = await cajasService.getAll();
@@ -173,7 +178,6 @@ export default function TopAppBar({
         } finally { setCreating(false); }
     };
 
-    /* ── Series ────────────────────────────────────────────────────────── */
     const fetchSeries = async () => {
         try {
             const data    = await invoiceSeriesService.getAll();
@@ -219,10 +223,10 @@ export default function TopAppBar({
         ? `${selectedSerie.prefix}${String(selectedSerie.next_folio).padStart(4, '0')}`
         : '—';
 
-    /* ── Props comunes para ambas instancias de CajaDropdownContent ────── */
     const cajaDropdownCommonProps = {
         cajas, selectedCaja,
         cajaForm, newCajaName, cajaError, creating,
+        hasDrawerPrinter, drawerStatus,
         onSelect:      applySelectCaja,
         onShowForm:    () => setCajaForm(true),
         onNameChange:  e  => { setNewCajaName(e.target.value); setCajaError(''); },
@@ -230,6 +234,7 @@ export default function TopAppBar({
         onCreate:      handleCreateCaja,
         onMovimiento:  handleOpenMovimiento,
         onCorte:       handleOpenCorte,
+        onOpenDrawer:  handleOpenDrawer,
     };
 
     const serieDropdownCommonProps = {
@@ -249,17 +254,13 @@ export default function TopAppBar({
         </div>
     );
 
-    /* ══════════════════════════════════════════════════════════════════════
-       RENDER
-    ══════════════════════════════════════════════════════════════════════ */
     return (
         <>
-            {/* ── Modales de caja ── */}
             <MovimientoCajaModal
                 isOpen={showMovimiento}
                 onClose={() => setShowMovimiento(false)}
                 caja={selectedCaja}
-                onMovementCreated={() => {/* opcional: recargar algo */}}
+                onMovementCreated={() => {}}
             />
             <CorteCajaModal
                 isOpen={showCorte}
@@ -271,7 +272,6 @@ export default function TopAppBar({
 
                 {/* ════ DESKTOP ════ */}
                 <div className="hidden md:flex items-center justify-between px-lg h-[64px]">
-
                     <div className="flex items-center gap-md">
                         <div className="relative">
                             <span className="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-outline">search</span>
@@ -409,20 +409,25 @@ export default function TopAppBar({
 
 /* ══════════════════════════════════════════════════════════════════════════
    CajaDropdownContent
-   Contenido del menú de caja. Ya NO incluye posicionamiento absolute/fixed
-   ni z-index: eso lo resuelve DropdownPortal, que es quien lo monta.
-   — "Caja actual" como acordeón: al tocarlo se despliega la lista de cajas
-     (y la opción de crear una nueva) dentro del mismo menú, sin cerrarlo.
-   — Movimiento de caja / Realizar corte como acciones principales, grandes
-     y con más espacio táctil — son las que más se usan en el día a día.
+   Ahora incluye el botón "Abrir cajón" solo si hay una impresora con cajón.
 ══════════════════════════════════════════════════════════════════════════ */
 function CajaDropdownContent({
     cajas, selectedCaja,
     cajaForm, newCajaName, cajaError, creating,
+    hasDrawerPrinter, drawerStatus,
     onSelect, onShowForm, onNameChange, onCancel, onCreate,
-    onMovimiento, onCorte,
+    onMovimiento, onCorte, onOpenDrawer,
 }) {
     const [selectorOpen, setSelectorOpen] = useState(false);
+
+    /* Ícono y texto del botón de cajón según estado */
+    const drawerConfig = {
+        idle:    { icon: 'point_of_sale', text: 'Abrir cajón',    cls: 'text-on-surface', spin: false },
+        opening: { icon: 'autorenew',     text: 'Abriendo…',      cls: 'text-secondary',  spin: true  },
+        ok:      { icon: 'check_circle',  text: '¡Cajón abierto!', cls: 'text-emerald-600', spin: false },
+        error:   { icon: 'error',         text: 'Error al abrir', cls: 'text-error',       spin: false },
+    };
+    const dc = drawerConfig[drawerStatus] ?? drawerConfig.idle;
 
     return (
         <div className="bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant/20 overflow-hidden">
@@ -456,22 +461,15 @@ function CajaDropdownContent({
                                 </button>
                             ))
                         )}
-
-                        {/* Crear nueva caja */}
                         {!cajaForm ? (
-                            <button
-                                onClick={onShowForm}
-                                className="w-full pl-10 pr-4 py-2 flex items-center gap-2 hover:bg-surface-container text-[13px] text-secondary font-medium text-left transition-colors"
-                            >
+                            <button onClick={onShowForm} className="w-full pl-10 pr-4 py-2 flex items-center gap-2 hover:bg-surface-container text-[13px] text-secondary font-medium text-left transition-colors">
                                 <span className="material-symbols-outlined text-[16px]">add</span>
                                 Nueva caja
                             </button>
                         ) : (
                             <div className="px-4 pt-1 pb-1 flex flex-col gap-2">
                                 <input
-                                    autoFocus
-                                    value={newCajaName}
-                                    onChange={onNameChange}
+                                    autoFocus value={newCajaName} onChange={onNameChange}
                                     onKeyDown={e => e.key === 'Enter' && onCreate()}
                                     placeholder="Ej. Caja Principal"
                                     className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary"
@@ -487,7 +485,7 @@ function CajaDropdownContent({
                 )}
             </div>
 
-            {/* ── Acciones principales: Movimiento / Corte ── */}
+            {/* ── Acciones principales ── */}
             <button
                 onClick={onMovimiento}
                 disabled={!selectedCaja}
@@ -496,6 +494,7 @@ function CajaDropdownContent({
                 <span className="material-symbols-outlined text-[20px] text-secondary">swap_vert</span>
                 Movimiento de caja
             </button>
+
             <button
                 onClick={onCorte}
                 disabled={!selectedCaja}
@@ -504,12 +503,32 @@ function CajaDropdownContent({
                 <span className="material-symbols-outlined text-[20px] text-secondary">point_of_sale</span>
                 Realizar corte
             </button>
+
+            {/* ── Abrir cajón — solo visible si hay impresora con cajón ── */}
+            {hasDrawerPrinter && (
+                <button
+                    onClick={onOpenDrawer}
+                    disabled={drawerStatus === 'opening'}
+                    className={`w-full px-4 py-3.5 flex items-center gap-3 text-[14px] font-medium text-left transition-colors border-t border-outline-variant/10
+                        ${drawerStatus === 'ok'    ? 'bg-emerald-50'  : ''}
+                        ${drawerStatus === 'error' ? 'bg-red-50'      : 'hover:bg-surface-container'}
+                        disabled:cursor-not-allowed ${dc.cls}`}
+                >
+                    <span
+                        className={`material-symbols-outlined text-[20px] ${dc.spin ? 'animate-spin' : ''}`}
+                        style={{ fontVariationSettings: drawerStatus === 'ok' ? "'FILL' 1" : "'FILL' 0" }}
+                    >
+                        {dc.icon}
+                    </span>
+                    {dc.text}
+                </button>
+            )}
         </div>
     );
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   SerieDropdownContent
+   SerieDropdownContent — sin cambios
 ══════════════════════════════════════════════════════════════════════════ */
 function SerieDropdownContent({ series, selectedSerie, serieForm, newSerie, serieError, creating, onSelect, onShowForm, onSerieChange, onCancel, onCreate }) {
     return (
@@ -531,39 +550,24 @@ function SerieDropdownContent({ series, selectedSerie, serieForm, newSerie, seri
             )}
             <div className="border-t border-outline-variant/20">
                 {!serieForm ? (
-                    <button onClick={onShowForm}
-                        className="w-full px-4 py-2.5 flex items-center gap-2 hover:bg-surface-container text-[13px] text-secondary font-medium text-left transition-colors">
+                    <button onClick={onShowForm} className="w-full px-4 py-2.5 flex items-center gap-2 hover:bg-surface-container text-[13px] text-secondary font-medium text-left transition-colors">
                         <span className="material-symbols-outlined text-[16px]">add</span>
                         Nueva serie
                     </button>
                 ) : (
                     <div className="p-3 flex flex-col gap-2">
-                        <input
-                            autoFocus
-                            value={newSerie.name}
-                            onChange={e => onSerieChange('name', e.target.value)}
-                            placeholder="Nombre (ej. Principal)"
-                            className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary"
-                        />
+                        <input autoFocus value={newSerie.name} onChange={e => onSerieChange('name', e.target.value)} placeholder="Nombre (ej. Principal)"
+                            className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary" />
                         <div className="flex gap-2">
                             <div className="flex flex-col gap-0.5 w-20">
                                 <span className="text-[10px] text-on-surface-variant px-0.5">Prefijo</span>
-                                <input
-                                    value={newSerie.prefix}
-                                    onChange={e => onSerieChange('prefix', e.target.value.toUpperCase().slice(0, 5))}
-                                    placeholder="A"
-                                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] font-mono uppercase focus:outline-none focus:ring-1 focus:ring-secondary"
-                                />
+                                <input value={newSerie.prefix} onChange={e => onSerieChange('prefix', e.target.value.toUpperCase().slice(0, 5))} placeholder="A"
+                                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] font-mono uppercase focus:outline-none focus:ring-1 focus:ring-secondary" />
                             </div>
                             <div className="flex flex-col gap-0.5 flex-1">
                                 <span className="text-[10px] text-on-surface-variant px-0.5">Folio inicial</span>
-                                <input
-                                    type="number" min="1"
-                                    value={newSerie.next_folio}
-                                    onChange={e => onSerieChange('next_folio', e.target.value)}
-                                    placeholder="1"
-                                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary"
-                                />
+                                <input type="number" min="1" value={newSerie.next_folio} onChange={e => onSerieChange('next_folio', e.target.value)} placeholder="1"
+                                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary" />
                             </div>
                         </div>
                         {serieError && <p className="text-error text-[11px]">{serieError}</p>}

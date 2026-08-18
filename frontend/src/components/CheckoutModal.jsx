@@ -5,15 +5,20 @@ import { printSaleTicket } from '../services/printerService';
 
 /* ══════════════════════════════════════════════════════════════════════════
    CheckoutModal
-   Props:
-     isOpen           bool
-     onClose()
-     cart[]           items del carrito (pueden tener appliedOffer)
-     total            number  — total con descuentos ya aplicados
-     onFinishSale()
-     cashRegisterId   ID del turno de caja
-     cajaId           ID de la caja física
-     cajaNombre       string
+   ───────────────────────────────────────────────────────────────────────────
+   OPTIMIZACIÓN: la impresión y el cajón ya NO bloquean el flujo de cobro.
+
+   Antes:
+     Confirmar venta → esperar API → esperar impresión → esperar cajón → mostrar éxito
+     Tiempo total: 3-8 segundos de spinner
+
+   Ahora:
+     Confirmar venta → esperar API → mostrar éxito INMEDIATAMENTE
+                                   → impresión en segundo plano (badge se actualiza solo)
+                                   → cajón en segundo plano
+
+   El cajero ve el cambio a devolver al instante. El badge de impresión
+   (printing → ok/error) se actualiza en tiempo real sin bloquear el UI.
 ══════════════════════════════════════════════════════════════════════════ */
 export default function CheckoutModal({
     isOpen,
@@ -26,14 +31,14 @@ export default function CheckoutModal({
     cajaNombre = '',
 }) {
     const [paymentMethod, setPaymentMethod] = useState('cash');
-    const [amountPaid, setAmountPaid] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+    const [amountPaid,    setAmountPaid]    = useState('');
+    const [loading,       setLoading]       = useState(false);
+    const [error,         setError]         = useState('');
     const [saleCompleted, setSaleCompleted] = useState(false);
-    const [changeAmount, setChangeAmount] = useState(0);
-    const [folio, setFolio] = useState('');
-    const [printStatus, setPrintStatus] = useState('idle');
-    const [printError, setPrintError] = useState('');
+    const [changeAmount,  setChangeAmount]  = useState(0);
+    const [folio,         setFolio]         = useState('');
+    const [printStatus,   setPrintStatus]   = useState('idle');
+    const [printError,    setPrintError]    = useState('');
 
     const [cashierName, setCashierName] = useState('');
     useEffect(() => {
@@ -54,8 +59,8 @@ export default function CheckoutModal({
         }
     }, []);
 
-    const inputRef = useRef(null);
-    const formattedTotal = useMemo(() => Number(total || 0).toFixed(2), [total]);
+    const inputRef        = useRef(null);
+    const formattedTotal  = useMemo(() => Number(total || 0).toFixed(2), [total]);
 
     useEffect(() => {
         if (isOpen) {
@@ -74,7 +79,7 @@ export default function CheckoutModal({
 
     if (!isOpen) return null;
 
-    // ── Procesar venta ────────────────────────────────────────────────────────
+    /* ── Procesar venta ──────────────────────────────────────────────────── */
     const handleProcessSale = async () => {
         setError('');
         const paid = Number(amountPaid);
@@ -87,16 +92,14 @@ export default function CheckoutModal({
         setLoading(true);
         try {
             const payload = {
-                payment_method: paymentMethod,
-                amount_paid: paymentMethod === 'cash' ? paid : Number(total),
+                payment_method:   paymentMethod,
+                amount_paid:      paymentMethod === 'cash' ? paid : Number(total),
                 cash_register_id: cashRegisterId,
-                caja_id: cajaId,
-                // ── Incluir offer_id por item para que el backend valide y
-                //    aplique el descuento server-side ──────────────────────────
+                caja_id:          cajaId,
                 items: cart.map(item => ({
                     product_id: item.id,
-                    quantity: item.quantity,
-                    offer_id: item.appliedOffer?.id ?? null,
+                    quantity:   item.quantity,
+                    offer_id:   item.appliedOffer?.id ?? null,
                 })),
             };
 
@@ -107,67 +110,70 @@ export default function CheckoutModal({
 
             setChangeAmount(finalChange);
             setFolio(response?.folio ?? '');
-            setSaleCompleted(true);
 
-            // ── Construir items enriquecidos para el ticket ──────────────────
-            // response.items tiene: product_id, quantity, unit_price,
-            //   discount_amount, offer_id, offer_label, subtotal
-            // cart tiene: name, sku, images, etc.
+            // ── Construir datos del ticket ────────────────────────────────
             const itemsParaTicket = (response.items || []).map(ri => {
                 const ci = cart.find(c => c.id === ri.product_id);
                 return {
-                    name: ci?.name ?? `Producto ${ri.product_id}`,
-                    sku: ci?.sku ?? '---',
-                    quantity: ri.quantity,
-                    price: ri.unit_price,   // precio original de catálogo
-                    subtotal: ri.subtotal,      // lo que se cobró realmente
+                    name:            ci?.name ?? `Producto ${ri.product_id}`,
+                    sku:             ci?.sku  ?? '---',
+                    quantity:        ri.quantity,
+                    price:           ri.unit_price,
+                    subtotal:        ri.subtotal,
                     discount_amount: ri.discount_amount ?? 0,
-                    offer_label: ri.offer_label ?? null,
+                    offer_label:     ri.offer_label ?? null,
                 };
             });
 
-            // Descuento total de la venta (para el pie del ticket)
             const descuentoTotal = itemsParaTicket.reduce(
                 (s, i) => s + Number(i.discount_amount || 0), 0
             );
 
             const saleForPrint = {
-                // Datos de la venta
                 ...response.sale,
-                folio: response.folio,
+                folio:          response.folio,
                 payment_method: paymentMethod,
-                amount_paid: paymentMethod === 'cash' ? paid : Number(total),
-                change: finalChange,
-                // Items enriquecidos con nombre, SKU y descuento
-                items: itemsParaTicket,
-                // Subtotal antes de descuentos (para desglose en ticket)
-                subtotal: Number(response.sale.total_amount) + descuentoTotal,
-                discount: descuentoTotal,
-                total: Number(response.sale.total_amount),
-                // Datos del cajero y caja
-                cashier: cashierName,
-                caja: cajaNombre,
+                amount_paid:    paymentMethod === 'cash' ? paid : Number(total),
+                change:         finalChange,
+                items:          itemsParaTicket,
+                subtotal:       Number(response.sale.total_amount) + descuentoTotal,
+                discount:       descuentoTotal,
+                total:          Number(response.sale.total_amount),
+                cashier:        cashierName,
+                caja:           cajaNombre,
             };
 
-            // ── Imprimir ─────────────────────────────────────────────────────
+            // ── MOSTRAR ÉXITO INMEDIATAMENTE ──────────────────────────────
+            // No esperamos la impresión — el cajero ve el cambio al instante.
+            setSaleCompleted(true);
+            setLoading(false);
+
+            // ── IMPRESIÓN EN SEGUNDO PLANO (fire-and-forget) ──────────────
+            // setPrintStatus se actualiza en tiempo real sin bloquear el UI.
             setPrintStatus('printing');
 
-            const printResult = await printSaleTicket(saleForPrint);
-
-            if (printResult.ok) {
-                setPrintStatus('ok');
-            } else if (printResult.error === 'No hay impresora con impresión automática habilitada.') {
-                setPrintStatus('skipped');
-            } else {
+            // No usamos await aquí — la impresión ocurre en segundo plano.
+            // printSaleTicket también maneja la apertura del cajón internamente
+            // (si openDrawer=true y payment_method='cash').
+            printSaleTicket(saleForPrint).then(printResult => {
+                if (printResult.ok) {
+                    setPrintStatus('ok');
+                } else if (printResult.error === 'No hay impresora con impresión automática habilitada.') {
+                    setPrintStatus('skipped');
+                } else {
+                    setPrintStatus('error');
+                    setPrintError(printResult.error);
+                }
+            }).catch(err => {
                 setPrintStatus('error');
-                setPrintError(printResult.error);
-            }
+                setPrintError(err.message);
+            });
 
         } catch (err) {
+            // Error de la API (la venta no se creó) — este SÍ es bloqueante
             setError(err.message || 'Ocurrió un error al procesar la venta.');
             setSaleCompleted(false);
             setPrintStatus('idle');
-        } finally {
             setLoading(false);
         }
     };
@@ -186,7 +192,7 @@ export default function CheckoutModal({
         if (e.key === 'Enter' && !loading && !saleCompleted) handleProcessSale();
     };
 
-    // ── Render ────────────────────────────────────────────────────────────────
+    /* ── Render ───────────────────────────────────────────────────────────── */
     return ReactDOM.createPortal(
         <div className="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-end md:items-center justify-center md:p-4">
             <div className="w-full md:w-[480px] max-h-[92dvh] md:max-h-[90vh] rounded-t-[28px] md:rounded-[28px] bg-white shadow-2xl flex flex-col overflow-hidden">
@@ -279,7 +285,7 @@ export default function CheckoutModal({
                                 <div className="grid grid-cols-2 gap-3">
                                     {[
                                         { value: 'cash', label: 'Efectivo', icon: 'payments' },
-                                        { value: 'card', label: 'Tarjeta', icon: 'credit_card' },
+                                        { value: 'card', label: 'Tarjeta',  icon: 'credit_card' },
                                     ].map(m => (
                                         <button key={m.value}
                                             onClick={() => {
@@ -320,8 +326,8 @@ export default function CheckoutModal({
                                     <div className="grid grid-cols-4 gap-2">
                                         {[...new Set([
                                             Number(total),
-                                            Math.ceil(total / 10) * 10,
-                                            Math.ceil(total / 50) * 50,
+                                            Math.ceil(total / 10)  * 10,
+                                            Math.ceil(total / 50)  * 50,
                                             Math.ceil(total / 100) * 100,
                                         ])].slice(0, 4).map(v => (
                                             <button key={v}
@@ -369,9 +375,9 @@ export default function CheckoutModal({
 function PrintStatusBadge({ status, error }) {
     if (status === 'idle' || status === 'skipped') return null;
     const configs = {
-        printing: { icon: 'autorenew', spin: true, text: 'Enviando a la impresora…', cls: 'bg-blue-50 border-blue-200 text-blue-700' },
-        ok: { icon: 'print', spin: false, text: 'Ticket impreso correctamente', cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
-        error: { icon: 'print_disabled', spin: false, text: `Error al imprimir${error ? `: ${error}` : ''}`, cls: 'bg-red-50 border-red-200 text-red-700' },
+        printing: { icon: 'autorenew',    spin: true,  text: 'Enviando a la impresora…',                          cls: 'bg-blue-50 border-blue-200 text-blue-700'       },
+        ok:       { icon: 'print',        spin: false, text: 'Ticket impreso correctamente',                      cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+        error:    { icon: 'print_disabled', spin: false, text: `Error al imprimir${error ? `: ${error}` : ''}`,   cls: 'bg-red-50 border-red-200 text-red-700'           },
     };
     const c = configs[status];
     if (!c) return null;

@@ -6,6 +6,7 @@ import InventoryDetailPanel from '../components/inventory/InventoryDetailPanel';
 import ProductFormModal from '../components/inventory/ProductFormModal';
 import CategoryManagerModal from '../components/inventory/CategoryManagerModal';
 import { inventoryService as productService, categoryService } from '../services/api';
+import { invalidateCatalog } from '../hooks/useProductCatalog';
 
 export default function InventoryPage() {
     const [products, setProducts] = useState([]);
@@ -57,6 +58,7 @@ export default function InventoryPage() {
             }
             setIsProductModalOpen(false);
             loadData();
+            invalidateCatalog();
             if (selectedProduct && productToEdit && selectedProduct.id === productToEdit.id) {
                 // Update selected product info if it was edited
                 setSelectedProduct(null); // Limpiamos para refrescar la vista
@@ -76,6 +78,7 @@ export default function InventoryPage() {
         await productService.delete(product.id);
         if (selectedProduct?.id === product.id) setSelectedProduct(null);
         loadData();
+        invalidateCatalog(); 
     };
 
     // Filter products
@@ -169,6 +172,7 @@ export default function InventoryPage() {
                         // Actualización optimista de la tabla
                         setProducts(products.map(p => p.id === selectedProduct.id ? { ...p, stock: newStock } : p));
                         setSelectedProduct({ ...selectedProduct, stock: newStock });
+                        invalidateCatalog();
                     }}
                     onBack={() => setSelectedProduct(null)} 
                     onEdit={handleEditProduct}
