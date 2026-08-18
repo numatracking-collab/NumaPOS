@@ -1,5 +1,5 @@
 import express from 'express';
-import pool from '../db.js'; // ajusta al import real que uses en tus otros routers
+import { pool } from '../config/db.js'; // ajusta al import real que uses en tus otros routers
 
 const router = express.Router();
 
