@@ -11,6 +11,7 @@ router.use(verifyToken);
 ───────────────────────────────────────────────── */
 router.get('/version', async (req, res) => {
     const { tenantId } = req.user;
+    res.set('Cache-Control', 'no-store'); // evita 304 (rompía el fetch del frontend)
     try {
         const result = await query(
             `SELECT
@@ -34,7 +35,11 @@ router.get('/version', async (req, res) => {
    Devuelve productos + imágenes + claves adicionales
 ───────────────────────────────────────────────── */
 router.get('/', async (req, res) => {
-    const { tenantId } = req.user;
+    const { tenantId, permissions = [] } = req.user;
+    res.set('Cache-Control', 'no-store'); // evita 304 (rompía el fetch del frontend)
+
+    const canViewCost  = permissions.includes('product.view_cost');
+    const canViewStock = permissions.includes('product.view_stock');
 
     try {
         const result = await query(
@@ -66,7 +71,21 @@ router.get('/', async (req, res) => {
             ORDER BY p.id DESC`,
             [tenantId]
         );
-        res.json(result.rows);
+
+        const rows = result.rows.map(product => {
+            const p = { ...product };
+            if (!canViewCost) delete p.cost;
+            if (!canViewStock) {
+                delete p.stock;
+                delete p.min_stock;
+                delete p.max_stock;
+                delete p.stock_min;
+                delete p.stock_max;
+            }
+            return p;
+        });
+
+        res.json(rows);
     } catch (err) {
         console.error('Error fetching products:', err);
         res.status(500).json({ error: 'Error al obtener los productos.' });

@@ -77,7 +77,7 @@ router.post('/register', async (req, res) => {
         await query(
             `INSERT INTO role_permissions (role_id, permission_id)
              SELECT $1, id FROM permissions
-             WHERE code IN ('caja.open', 'caja.movement', 'corte.create', 'sale.cancel')`,
+             WHERE code IN ('caja.open', 'caja.movement', 'corte.create', 'sale.cancel', 'product.view_stock')`,
             [cajeroResult.rows[0].id]
         );
 
