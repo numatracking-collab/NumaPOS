@@ -1,5 +1,6 @@
 import express from 'express';
 import { pool } from '../config/db.js';
+import { requirePermission } from '../middleware/requirePermission.js';
 
 const router = express.Router();
 
@@ -155,7 +156,7 @@ router.get('/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/offers — Crear oferta
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('offers.manage'), async (req, res) => {
     const client = await pool.connect();
     try {
         const { tenantId: tenant_id, userId: user_id } = req.user;
@@ -217,7 +218,7 @@ router.post('/', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // PUT /api/offers/:id — Editar oferta completa
 // ─────────────────────────────────────────────────────────────────────────────
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('offers.manage'), async (req, res) => {
     const client = await pool.connect();
     try {
         const { tenantId: tenant_id } = req.user;
@@ -286,7 +287,7 @@ router.put('/:id', async (req, res) => {
 // PATCH /api/offers/:id/status — Cambiar solo el status (active/paused/expired)
 // Body: { status: 'active' | 'paused' | 'expired' }
 // ─────────────────────────────────────────────────────────────────────────────
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requirePermission('offers.manage'), async (req, res) => {
     try {
         const { tenantId: tenant_id } = req.user;
         const { id } = req.params;
@@ -315,7 +316,7 @@ router.patch('/:id/status', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/offers/:id — Eliminar oferta (y sus offer_products en cascada)
 // ─────────────────────────────────────────────────────────────────────────────
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('offers.manage'), async (req, res) => {
     try {
         const { tenantId: tenant_id } = req.user;
         const { id } = req.params;

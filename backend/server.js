@@ -17,7 +17,8 @@ import aiRouter from './routes/ai.js';
 import adGenerateRouter from './routes/ad-generate.js';
 import appUpdatesRoutes from './routes/appUpdates.js';
 import businessRoutes from './routes/business.js';
-
+import rolesRoutes from './routes/roles.js';
+import usersRoutes from './routes/users.js';
 
 dotenv.config();
 
@@ -30,6 +31,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRouter);
 app.use('/api/ai', adGenerateRouter);
 app.use('/api/app-updates', appUpdatesRoutes);
+app.use('/api/roles', rolesRoutes);
+app.use('/api/users', usersRoutes);
 // ── Rutas protegidas ──────────────────────────────────────────────────────────
 app.use('/api/ai', aiRouter);
 app.use('/api/business', verifyToken, businessRoutes);

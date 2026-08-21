@@ -1,7 +1,9 @@
 import express from 'express';
 import { pool } from '../config/db.js';
+import { requirePermission } from '../middleware/requirePermission.js';
 
 const router = express.Router();
+// Nota: verifyToken se asume global en server.js (como ya estaba).
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CAJAS
@@ -23,7 +25,7 @@ router.get('/cajas', async (req, res) => {
 });
 
 // POST /api/cash-registers/cajas
-router.post('/cajas', async (req, res) => {
+router.post('/cajas', requirePermission('devices.manage'), async (req, res) => {
     try {
         const { tenantId: tenant_id } = req.user;
         const { name } = req.body;
@@ -73,7 +75,7 @@ router.get('/movements', async (req, res) => {
 });
 
 // POST /api/cash-registers/movements
-router.post('/movements', async (req, res) => {
+router.post('/movements', requirePermission('caja.movement'), async (req, res) => {
     try {
         const { tenantId: tenant_id, userId: user_id } = req.user;
         const { caja_id, type, amount, reason = '' } = req.body;
@@ -214,7 +216,7 @@ router.get('/preview', async (req, res) => {
 ═══════════════════════════════════════════════════════════════════════════ */
 
 // POST /api/cash-registers/corte
-router.post('/corte', async (req, res) => {
+router.post('/corte', requirePermission('corte.create'), async (req, res) => {
     const client = await pool.connect();
     try {
         const { tenantId: tenant_id, userId: user_id } = req.user;

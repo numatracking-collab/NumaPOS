@@ -1,5 +1,6 @@
 import express from 'express';
 import { pool } from '../config/db.js';
+import { requirePermission } from '../middleware/requirePermission.js';
 
 const router = express.Router();
 // Nota: verifyToken se asume global en server.js (igual que cash-registers.js)
@@ -31,7 +32,7 @@ router.get('/', async (req, res) => {
 // POST /api/invoice-series  — Crear una nueva serie
 // Body: { name, prefix, next_folio? }
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('series.change'), async (req, res) => {
     try {
         const { tenantId: tenant_id } = req.user;
         const { name, prefix = '', next_folio = 1 } = req.body;
@@ -72,7 +73,7 @@ router.post('/', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/invoice-series/:id/default  — Establecer como serie por defecto
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/:id/default', async (req, res) => {
+router.post('/:id/default', requirePermission('series.change'), async (req, res) => {
     const client = await pool.connect();
     try {
         const { tenantId: tenant_id } = req.user;

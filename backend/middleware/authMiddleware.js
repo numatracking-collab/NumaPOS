@@ -6,11 +6,16 @@ dotenv.config();
 
 /*
  * Códigos de bloqueo:
- *   LICENSE_EXPIRED    → vencida por fecha          → "contacta a ventas"
- *   LICENSE_SUSPENDED  → suspendida manualmente      → "contacta a soporte"
- *   LICENSE_CANCELLED  → cancelada manualmente       → "contacta a soporte"
- *   ACCOUNT_CANCELLED  → tenant.status = cancelado   → "contacta a soporte"
- *   ACCOUNT_NOT_FOUND  → tenant no existe en la DB   → genérico
+ *   USER_INACTIVE      → usuario desactivado por el dueño → "contacta al admin"
+ *   LICENSE_EXPIRED     → vencida por fecha          → "contacta a ventas"
+ *   LICENSE_SUSPENDED   → suspendida manualmente      → "contacta a soporte"
+ *   LICENSE_CANCELLED   → cancelada manualmente       → "contacta a soporte"
+ *   ACCOUNT_CANCELLED   → tenant.status = cancelado   → "contacta a soporte"
+ *   ACCOUNT_NOT_FOUND   → tenant no existe en la DB   → genérico
+ *
+ * NOTA: la lógica de licencia/cuenta es EXACTAMENTE la misma que ya tenías.
+ * Lo único nuevo es: (a) trae rol + permisos del usuario en req.user,
+ * (b) bloquea si el usuario está desactivado (is_active = false).
  */
 export const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -32,20 +37,29 @@ export const verifyToken = async (req, res, next) => {
         tenantId: decoded.tenantId,
         userId:   decoded.userId,
         email:    decoded.email,
-        role:     decoded.role,
+        role:     decoded.role, // se conserva por compatibilidad con código existente
     };
 
     try {
         const result = await pool.query(
-            `SELECT t.status   AS tenant_status,
-                    l.status   AS licence_status,
-                    l.expires_at
+            `SELECT t.status    AS tenant_status,
+                    l.status    AS licence_status,
+                    l.expires_at,
+                    u.is_active AS user_is_active,
+                    r.id        AS role_id,
+                    r.name      AS role_name,
+                    COALESCE(array_agg(p.code) FILTER (WHERE p.code IS NOT NULL), '{}') AS permissions
              FROM tenants t
              LEFT JOIN licences l ON l.tenant_id = t.id
+             LEFT JOIN users u ON u.id = $2
+             LEFT JOIN roles r ON r.id = u.role_id
+             LEFT JOIN role_permissions rp ON rp.role_id = r.id
+             LEFT JOIN permissions p ON p.id = rp.permission_id
              WHERE t.id = $1
+             GROUP BY t.status, l.status, l.expires_at, l.created_at, u.is_active, r.id, r.name
              ORDER BY l.created_at DESC
              LIMIT 1`,
-            [decoded.tenantId]
+            [decoded.tenantId, decoded.userId]
         );
 
         const row = result.rows[0];
@@ -54,6 +68,14 @@ export const verifyToken = async (req, res, next) => {
             return res.status(403).json({
                 error: 'No se encontró información de tu cuenta.',
                 code:  'ACCOUNT_NOT_FOUND',
+            });
+        }
+
+        // ── Usuario desactivado (independiente del estado del tenant/licencia) ──
+        if (row.user_is_active === false) {
+            return res.status(403).json({
+                error: 'Tu usuario ha sido desactivado. Contacta al administrador de tu negocio.',
+                code:  'USER_INACTIVE',
             });
         }
 
@@ -89,6 +111,11 @@ export const verifyToken = async (req, res, next) => {
                 code:  'LICENSE_EXPIRED',
             });
         }
+
+        // ── Todo bien: adjuntamos rol y permisos para las rutas siguientes ──
+        req.user.roleId      = row.role_id;
+        req.user.roleName    = row.role_name;
+        req.user.permissions = row.permissions || [];
 
         next();
 

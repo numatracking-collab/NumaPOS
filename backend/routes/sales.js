@@ -1,5 +1,6 @@
 import express from 'express';
 import { pool } from '../config/db.js';
+import { requirePermission } from '../middleware/requirePermission.js';
 
 const router = express.Router();
 
@@ -72,8 +73,9 @@ function isOfferTimeValid(offer) {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/sales  — Registrar venta
 // Body items: [{ product_id, quantity, offer_id? }]
+// Requiere caja.open: es la acción de vender / operar la caja.
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('caja.open'), async (req, res) => {
     const client = await pool.connect();
     try {
         const { tenantId: tenant_id, userId: user_id } = req.user;
@@ -401,7 +403,7 @@ router.get('/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/sales/:id/cancel — Cancelar una venta
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/:id/cancel', async (req, res) => {
+router.post('/:id/cancel', requirePermission('sale.cancel'), async (req, res) => {
     const client = await pool.connect();
     try {
         const { tenantId: tenant_id, userId: user_id } = req.user;

@@ -1,6 +1,7 @@
 import express from 'express';
 import { query } from '../config/db.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
+import { requirePermission } from '../middleware/requirePermission.js';
 
 const router = express.Router();
 router.use(verifyToken);
@@ -76,7 +77,7 @@ router.get('/', async (req, res) => {
    POST /api/products
    Crea producto con imágenes y claves adicionales
 ───────────────────────────────────────────────── */
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('product.create'), async (req, res) => {
     const { tenantId } = req.user;
     const {
         name, sku, category_id,
@@ -148,7 +149,7 @@ router.post('/', async (req, res) => {
    PUT /api/products/:id
    Actualiza producto; reemplaza imágenes y claves
 ───────────────────────────────────────────────── */
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('product.edit'), async (req, res) => {
     const { tenantId } = req.user;
     const { id } = req.params;
     const {
@@ -235,7 +236,7 @@ router.put('/:id', async (req, res) => {
 /* ─────────────────────────────────────────────────
    DELETE /api/products/:id
 ───────────────────────────────────────────────── */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('product.delete'), async (req, res) => {
     const { tenantId } = req.user;
     const { id } = req.params;
 
