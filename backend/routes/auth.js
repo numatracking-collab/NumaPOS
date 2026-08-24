@@ -158,6 +158,7 @@ router.get('/me', async (req, res) => {
              LIMIT 1`,
             [decoded.userId]
         );
+        res.set('Cache-Control', 'no-store');
 
         if (result.rows.length === 0)
             return res.status(404).json({ error: 'Usuario no encontrado.' });

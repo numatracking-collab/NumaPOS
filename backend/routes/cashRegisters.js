@@ -11,6 +11,7 @@ const router = express.Router();
 
 // GET /api/cash-registers/cajas
 router.get('/cajas', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
     try {
         const { tenantId: tenant_id } = req.user;
         const result = await pool.query(

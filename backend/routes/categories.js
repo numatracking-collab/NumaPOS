@@ -11,6 +11,7 @@ router.use(verifyToken);
 // GET: Obtener todas las categorías del tenant actual
 router.get('/', async (req, res) => {
     const { tenantId } = req.user;
+    res.set('Cache-Control', 'no-store');
 
     try {
         const result = await query(

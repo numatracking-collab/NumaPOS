@@ -14,6 +14,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
     try {
         const { tenantId: tenant_id } = req.user;
+        res.set('Cache-Control', 'no-store');
 
         const result = await pool.query(
             `SELECT * FROM invoice_series

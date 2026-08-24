@@ -100,6 +100,7 @@ function parseOfferBody(body) {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
     const client = await pool.connect();
+    res.set('Cache-Control', 'no-store');
     try {
         const { tenantId: tenant_id } = req.user;
         const extraParams = [];
