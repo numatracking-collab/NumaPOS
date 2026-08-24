@@ -2,6 +2,7 @@
    printerService.js  —  Servicio de impresión BLE / Windows
    ───────────────────────────────────────────────────────────────────────────
    FASE 3 — Soporte Electron (Windows, cola de impresión del sistema)
+   FASE 4 — Encabezado de negocio + formato configurable en el ticket
 
    Entornos soportados:
      - web       → navigator.bluetooth (Web Bluetooth API)
@@ -14,12 +15,23 @@
                            · device.config.openDrawer === true
                            · payment_method === 'cash'
                            · isReprint !== true
+
+   ENCABEZADO DE NEGOCIO (FASE 4):
+   - Antes de construir cualquier ticket, se obtienen los datos del negocio
+     (getBusinessSettings, cacheados en businessService.js) y, si el logo
+     está activado en ticket_config, su bitmap ESC/POS ya convertido
+     (getLogoRaster, cacheado en logoRaster.js). Ambos se pasan a
+     buildSaleTicket() para que arme el encabezado condicional.
+   - Si algo de esto falla (sin internet, logo corrupto, etc.) NO debe
+     tumbar la impresión del ticket — se imprime sin encabezado extendido.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 import { buildSaleTicket, buildDrawerPulse } from './ticketBuilder';
 import { isCapacitor, isElectron } from './runtimeEnv';
 import * as capBt from './capacitorBtAdapter';
 import * as elPrinter from './electronPrinterAdapter';
+import { getBusinessSettings } from './businessService';
+import { getLogoRaster } from './logoRaster';
 
 /* ── Perfiles BLE de impresoras térmicas conocidas ───────────────────────── */
 export const PRINTER_PROFILES = [
@@ -67,6 +79,36 @@ function buildOfferLabel(offerType, item = {}) {
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+/* ── Obtiene { business, ticketConfig } listos para buildSaleTicket().
+   Nunca lanza — si algo falla, regresa datos vacíos para no bloquear
+   la impresión del ticket en sí. ───────────────────────────────────────── */
+async function getBusinessTicketData() {
+  try {
+    const settings = await getBusinessSettings();
+    const cfg = settings.ticket_config || {};
+    let logoRaster = null;
+
+    if (cfg.show_logo && settings.logo_url) {
+      try { logoRaster = await getLogoRaster(settings.logo_url); }
+      catch (e) { console.warn('[Printer] No se pudo generar el bitmap del logo:', e.message); }
+    }
+
+    return {
+      business: {
+        business_name: settings.business_name,
+        phone: settings.phone,
+        email: settings.email,
+        address: settings.address,
+        logoRaster,
+      },
+      ticketConfig: cfg,
+    };
+  } catch (e) {
+    console.warn('[Printer] No se pudieron obtener los datos del negocio:', e.message);
+    return { business: {}, ticketConfig: {} };
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -317,11 +359,13 @@ async function _sendDrawerPulse(device, btRef) {
    @param {object}  saleData
    @param {object}  device
    @param {any}     btRef
-   @param {boolean} isReprint  — si true, NUNCA abre el cajón
+   @param {boolean} isReprint     — si true, NUNCA abre el cajón
+   @param {object}  business      — datos del negocio para el encabezado
+   @param {object}  ticketConfig  — toggles de formato del ticket
    ═══════════════════════════════════════════════════════════════════════════ */
-async function _sendTicket(saleData, device, btRef, isReprint = false) {
+async function _sendTicket(saleData, device, btRef, isReprint = false, business = {}, ticketConfig = {}) {
   const width = device.config?.ticketWidth ?? '58';
-  const bytes = buildSaleTicket(saleData, width);
+  const bytes = buildSaleTicket(saleData, width, business, ticketConfig);
 
   // ── Enviar ticket ─────────────────────────────────────────────────────────
   if (isElectron()) {
@@ -379,7 +423,8 @@ export async function printSaleTicket(saleData) {
     const result = await getActivePrinter();
     if (!result) return { ok: false, error: 'No hay impresora con impresión automática habilitada.' };
     const { device, btRef } = result;
-    return await _sendTicket(saleData, device, btRef, false); // isReprint = false
+    const { business, ticketConfig } = await getBusinessTicketData();
+    return await _sendTicket(saleData, device, btRef, false, business, ticketConfig); // isReprint = false
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -416,7 +461,8 @@ export async function reprintSaleTicket(sale, items = []) {
       }),
     };
 
-    return await _sendTicket(saleData, device, btRef, true); // isReprint = true → nunca abre cajón
+    const { business, ticketConfig } = await getBusinessTicketData();
+    return await _sendTicket(saleData, device, btRef, true, business, ticketConfig); // isReprint = true → nunca abre cajón
   } catch (err) {
     return { ok: false, error: err.message };
   }

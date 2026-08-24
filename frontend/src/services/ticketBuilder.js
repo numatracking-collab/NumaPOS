@@ -10,22 +10,31 @@
      item.discount_amount   number  — descuento total de esa línea (0 si sin oferta)
      item.offer_label       string  — etiqueta legible, ej. "PROMO PAPITAS 4 X 3"
 
-   Formato de línea con promoción:
-     58 mm:
-       <clave>
-       <nombre>
-       4 x $20.00                  $80.00     ← precio catálogo × qty
-       PROMO PAPITAS 4 X 3        -$20.00     ← en NEGRITA
-
-     80 mm:
-       <clave>  <nombre truncado>
-       4 x $20.00                  $80.00
-       PROMO PAPITAS 4 X 3        -$20.00     ← en NEGRITA
+   FASE 4 — Encabezado de negocio + formato configurable:
+     business:      { business_name, phone, email, address, logoRaster }
+                     logoRaster es un Uint8Array ya listo con el comando
+                     GS v 0 (ver services/logoRaster.js) — este archivo NO
+                     convierte imágenes, solo lo inserta si viene presente.
+     ticketConfig:  { show_logo, show_business_name, show_phone, show_email,
+                       show_address, show_sku, show_discounts, show_cashier,
+                       show_caja }
 ═══════════════════════════════════════════════════════════════════════════ */
 
 const ESC = 0x1B;
 const GS  = 0x1D;
 const LF  = 0x0A;
+
+const DEFAULT_TICKET_CONFIG = {
+    show_logo: true,
+    show_business_name: true,
+    show_phone: true,
+    show_email: false,
+    show_address: true,
+    show_sku: true,
+    show_discounts: true,
+    show_cashier: true,
+    show_caja: true,
+};
 
 /* ── Codificación Latin-1 ─────────────────────────────────────────────── */
 function enc(str) {
@@ -57,7 +66,39 @@ function twoCol(left, right, cols) {
     return [...enc(l + ' ' + right), LF];
 }
 
-function productLines(item, cols) {
+/* ── Encabezado de negocio (logo + datos de contacto) ───────────────────
+   Se arma por separado porque debe ir ANTES de "TICKET DE VENTA" y
+   respeta cada toggle de forma independiente. ─────────────────────────── */
+function buildBusinessHeader(business, cfg, cols) {
+    const lines = [];
+
+    if (cfg.show_logo && business.logoRaster instanceof Uint8Array) {
+        lines.push(...business.logoRaster, LF);
+    }
+
+    if (cfg.show_business_name && business.business_name) {
+        lines.push(
+            GS, 0x21, 0x01,                       // texto doble alto
+            ...centered(business.business_name, cols),
+            GS, 0x21, 0x00,
+        );
+    }
+
+    if (cfg.show_phone && business.phone) {
+        lines.push(...centered(business.phone, cols));
+    }
+    if (cfg.show_email && business.email) {
+        lines.push(...centered(business.email, cols));
+    }
+    if (cfg.show_address && business.address) {
+        lines.push(...centered(business.address, cols));
+    }
+
+    if (lines.length) lines.push(...sep(cols));
+    return lines;
+}
+
+function productLines(item, cols, cfg) {
     const clave        = item.sku  || '---';
     const nombre       = item.name || '';
     const qty          = item.quantity;
@@ -66,18 +107,24 @@ function productLines(item, cols) {
     const discount     = Number(item.discount_amount ?? 0);
     const lines        = [];
 
+    const showSku = cfg.show_sku !== false;
+
     if (cols >= 48) {
-        const claveCol = 10;
-        const nameCol  = cols - claveCol - 1;
-        lines.push(...enc(pad(clave, claveCol) + ' ' + pad(nombre, nameCol)), LF);
+        if (showSku) {
+            const claveCol = 10;
+            const nameCol  = cols - claveCol - 1;
+            lines.push(...enc(pad(clave, claveCol) + ' ' + pad(nombre, nameCol)), LF);
+        } else {
+            lines.push(...enc(pad(nombre, cols)), LF);
+        }
     } else {
-        lines.push(...enc(pad(clave, cols)), LF);
+        if (showSku) lines.push(...enc(pad(clave, cols)), LF);
         lines.push(...enc(pad(nombre, cols)), LF);
     }
 
     lines.push(...twoCol(`${qty} x $${precio}`, `$${importeBruto}`, cols));
 
-    if (discount > 0) {
+    if (discount > 0 && cfg.show_discounts !== false) {
         const label = (item.offer_label || 'PROMO').toUpperCase();
         lines.push(
             ESC, 0x45, 0x01,
@@ -91,9 +138,14 @@ function productLines(item, cols) {
 
 /* ══════════════════════════════════════════════════════════════════════════
    buildSaleTicket
+   @param {object} sale
+   @param {string} width          '58' | '80'
+   @param {object} business       datos del negocio (ver encabezado del archivo)
+   @param {object} ticketConfig   toggles de formato (ver DEFAULT_TICKET_CONFIG)
 ════════════════════════════════════════════════════════════════════════════ */
-export function buildSaleTicket(sale, width = '58') {
+export function buildSaleTicket(sale, width = '58', business = {}, ticketConfig = {}) {
     const cols = width === '80' ? 48 : 32;
+    const cfg  = { ...DEFAULT_TICKET_CONFIG, ...ticketConfig };
 
     const fecha = (() => {
         try {
@@ -122,29 +174,36 @@ export function buildSaleTicket(sale, width = '58') {
     const change = Number(sale.change ?? Math.max(0, paid - total));
 
     const metodoPago  = sale.payment_method === 'card' ? 'Tarjeta' : 'Efectivo';
-    const hayPromo    = discount > 0;
+    const hayPromo    = discount > 0 && cfg.show_discounts !== false;
+
+    const businessHeader = buildBusinessHeader(business, cfg, cols);
+
+    const infoLines = [
+        ...twoCol(`Folio: ${sale.folio ?? ''}`, fecha, cols),
+        ...twoCol(`Cliente: ${sale.customer_name || 'Publico en general'}`, hora, cols),
+        ...(cfg.show_caja && sale.caja ? twoCol(`Caja: ${sale.caja}`, '', cols) : []),
+        ...(cfg.show_cashier ? twoCol(`Cajero: ${sale.cashier ?? ''}`, '', cols) : []),
+    ];
 
     const cmd = [
         ESC, 0x40,
         ESC, 0x74, 0x01,
         ESC, 0x61, 0x01,
+        ...businessHeader,
         GS,  0x21, 0x11,
         ...enc('TICKET DE VENTA'), LF,
         GS,  0x21, 0x00,
         ...BLANK,
         ESC, 0x61, 0x00,
-        ...twoCol(`Folio: ${sale.folio ?? ''}`, fecha, cols),
-        ...twoCol(`Cliente: ${sale.customer_name || 'Publico en general'}`, hora, cols),
-        ...(sale.caja ? twoCol(`Caja: ${sale.caja}`, '', cols) : []),
-        ...twoCol(`Cajero: ${sale.cashier ?? ''}`, '', cols),
+        ...infoLines,
         ...sep(cols),
         ...(cols >= 48
-            ? [...enc(pad('CLAVE', 10) + ' ' + pad('DESCRIPCION', cols - 10 - 1)), LF]
-            : [...enc(pad('CLAVE / DESCRIPCION', cols)), LF]
+            ? [...enc(pad(cfg.show_sku !== false ? 'CLAVE' : '', 10) + ' ' + pad('DESCRIPCION', cols - 10 - 1)), LF]
+            : [...enc(pad(cfg.show_sku !== false ? 'CLAVE / DESCRIPCION' : 'DESCRIPCION', cols)), LF]
         ),
         ...twoCol('CANT x P.U.', 'IMPORTE', cols),
         ...sep(cols),
-        ...(sale.items || []).flatMap(item => productLines(item, cols)),
+        ...(sale.items || []).flatMap(item => productLines(item, cols, cfg)),
         ...sep(cols),
         ...twoCol('Subtotal:', `$${subtotal.toFixed(2)}`, cols),
         ...(hayPromo ? twoCol('Descuentos:', `-$${discount.toFixed(2)}`, cols) : []),

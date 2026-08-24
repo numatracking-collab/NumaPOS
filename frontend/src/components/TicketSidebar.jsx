@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import CheckoutModal from './CheckoutModal';
+import { useAuth } from '../context/AuthContext';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // effectiveSubtotal
@@ -363,6 +364,9 @@ export default function TicketSidebar({
     onApplyOffer,
     onDismissOffer,
 }) {
+    const { user } = useAuth();
+    const canViewStock = user?.permissions?.includes('product.view_stock');
+
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [nextFolio,   setNextFolio]   = useState(null);
 
@@ -492,7 +496,9 @@ export default function TicketSidebar({
                                         </div>
                                         <div className="text-right shrink-0">
                                             <p className="text-[13px] font-bold text-secondary">${Number(p.price).toFixed(2)}</p>
-                                            <p className="text-[10px] text-outline">{p.stock} {unit}</p>
+                                            {canViewStock && (
+                                                <p className="text-[10px] text-outline">{p.stock} {unit}</p>
+                                            )}
                                             {p.allow_fractions && (
                                                 <span className="text-[9px] font-bold text-secondary/60 flex items-center justify-end gap-0.5">
                                                     <span className="material-symbols-outlined text-[10px]">scatter_plot</span>fracción

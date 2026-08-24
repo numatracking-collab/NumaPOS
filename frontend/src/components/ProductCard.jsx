@@ -1,4 +1,12 @@
+import { useAuth } from '../context/AuthContext';
+
 export default function ProductCard({ product, onAdd, onSelect, onEdit, onDelete }) {
+    const { user } = useAuth();
+    const can = (code) => user?.permissions?.includes(code);
+    const canViewStock = can('product.view_stock');
+    const canEdit       = can('product.edit');
+    const canDelete     = can('product.delete');
+
     const minStock = product.min_stock !== undefined ? product.min_stock : 5;
     const maxStock = product.max_stock !== undefined ? product.max_stock : Infinity;
 
@@ -38,10 +46,10 @@ export default function ProductCard({ product, onAdd, onSelect, onEdit, onDelete
             onClick={handleClick}
             className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:shadow-lg transition-all cursor-pointer flex flex-col h-48 w-full active:scale-[0.98] relative group"
         >
-            {/* Acciones editar / eliminar */}
-            {(onEdit || onDelete) && (
+            {/* Acciones editar / eliminar — solo si el usuario tiene el permiso correspondiente */}
+            {((onEdit && canEdit) || (onDelete && canDelete)) && (
                 <div className="absolute top-2 right-2 flex gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {onEdit && (
+                    {onEdit && canEdit && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onEdit(product); }}
                             className="w-7 h-7 bg-white/90 backdrop-blur-sm shadow-md rounded-full flex items-center justify-center text-slate-600 hover:text-secondary hover:bg-white transition-colors"
@@ -50,7 +58,7 @@ export default function ProductCard({ product, onAdd, onSelect, onEdit, onDelete
                             <span className="material-symbols-outlined text-[16px]">edit</span>
                         </button>
                     )}
-                    {onDelete && (
+                    {onDelete && canDelete && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onDelete(product); }}
                             className="w-7 h-7 bg-white/90 backdrop-blur-sm shadow-md rounded-full flex items-center justify-center text-slate-600 hover:text-error hover:bg-white transition-colors"
@@ -94,21 +102,23 @@ export default function ProductCard({ product, onAdd, onSelect, onEdit, onDelete
                 {/* Fila inferior: stock a la izquierda, precio a la derecha */}
                 <div className="flex justify-between items-end mt-1 gap-1">
 
-                    {/* Columna izquierda: badge de alerta + cantidad con unidad */}
-                    <div className="flex flex-col gap-1 items-start">
-                        {stockLabel && (
-                            <span className={`px-1.5 py-0.5 font-bold text-[8px] rounded flex items-center gap-0.5 whitespace-nowrap tracking-wide ${stockStyle}`}>
-                                {isLowStock  && <span className="material-symbols-outlined text-[10px]">warning</span>}
-                                {isOverStock && <span className="material-symbols-outlined text-[10px]">trending_up</span>}
-                                {stockLabel}
-                            </span>
-                        )}
+                    {/* Columna izquierda: badge de alerta + cantidad con unidad — oculto sin product.view_stock */}
+                    {canViewStock ? (
+                        <div className="flex flex-col gap-1 items-start">
+                            {stockLabel && (
+                                <span className={`px-1.5 py-0.5 font-bold text-[8px] rounded flex items-center gap-0.5 whitespace-nowrap tracking-wide ${stockStyle}`}>
+                                    {isLowStock  && <span className="material-symbols-outlined text-[10px]">warning</span>}
+                                    {isOverStock && <span className="material-symbols-outlined text-[10px]">trending_up</span>}
+                                    {stockLabel}
+                                </span>
+                            )}
 
-                        <span className="text-sm font-bold text-primary leading-none">
-                            {stockDisplay}
-                            <span className="text-[10px] font-semibold text-on-surface-variant ml-0.5">{unit}</span>
-                        </span>
-                    </div>
+                            <span className="text-sm font-bold text-primary leading-none">
+                                {stockDisplay}
+                                <span className="text-[10px] font-semibold text-on-surface-variant ml-0.5">{unit}</span>
+                            </span>
+                        </div>
+                    ) : <div />}
 
                     {/* Columna derecha: precio */}
                     <span className="text-lg font-bold text-secondary leading-none">

@@ -146,6 +146,26 @@ export const offersService = {
     delete: (id) => request('DELETE', `/offers/${id}`),
 };
 
+/* ── Roles y permisos ────────────────────────────────────────────────── */
+export const rolesService = {
+    getAll: () => request('GET', '/roles'),
+    getPermissionsCatalog: () => request('GET', '/roles/permissions'),
+    create: (body) => request('POST', '/roles', body),
+    update: (id, body) => request('PUT', `/roles/${id}`, body),
+    delete: (id) => request('DELETE', `/roles/${id}`),
+};
+
+/* ── Usuarios del negocio (varios usuarios por tenant, mismo login que antes) ──
+   Distinto de authService: esto es la gestión de empleados desde Ajustes,
+   no el login/registro del dueño.
+───────────────────────────────────────────────────────────────────────── */
+export const usersService = {
+    getAll: () => request('GET', '/users'),
+    create: (body) => request('POST', '/users', body),
+    update: (id, body) => request('PUT', `/users/${id}`, body),
+    setStatus: (id, isActive) => request('PATCH', `/users/${id}/status`, { isActive }),
+};
+
 /* ── Actualizaciones de la app ──────────────────────────────────────────
    Solo lectura desde este lado: numa-admin-backend es quien publica.
 ───────────────────────────────────────────────────────────────────────── */

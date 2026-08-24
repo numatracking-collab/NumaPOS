@@ -6,11 +6,15 @@
      Abrir cajón (este último solo visible si hay impresora con cajón).
    — Selector de serie de facturación.
    — Los menús desplegables se renderizan vía Portal a document.body.
+   — Movimiento de caja / Realizar corte / Nueva caja ahora se ocultan si el
+     usuario no tiene el permiso correspondiente (caja.movement, corte.create,
+     devices.manage).
 ═══════════════════════════════════════════════════════════════════════════ */
 import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { cajasService, seriesService as invoiceSeriesService } from '../services/api';
 import { openDrawer } from '../services/printerService';
+import { useAuth } from '../context/AuthContext';
 import MovimientoCajaModal from './MovimientoCajaModal';
 import CorteCajaModal      from './CorteCajaModal';
 
@@ -409,7 +413,9 @@ export default function TopAppBar({
 
 /* ══════════════════════════════════════════════════════════════════════════
    CajaDropdownContent
-   Ahora incluye el botón "Abrir cajón" solo si hay una impresora con cajón.
+   Incluye el botón "Abrir cajón" solo si hay una impresora con cajón, y
+   ahora también oculta "Nueva caja" / "Movimiento de caja" / "Realizar
+   corte" si el usuario no tiene el permiso correspondiente.
 ══════════════════════════════════════════════════════════════════════════ */
 function CajaDropdownContent({
     cajas, selectedCaja,
@@ -419,6 +425,8 @@ function CajaDropdownContent({
     onMovimiento, onCorte, onOpenDrawer,
 }) {
     const [selectorOpen, setSelectorOpen] = useState(false);
+    const { user } = useAuth();
+    const can = (code) => user?.permissions?.includes(code);
 
     /* Ícono y texto del botón de cajón según estado */
     const drawerConfig = {
@@ -432,7 +440,7 @@ function CajaDropdownContent({
     return (
         <div className="bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant/20 overflow-hidden">
 
-            {/* ── Selector de caja (acordeón) ── */}
+            {/* ── Selector de caja (acordeón) — visible para todos, se necesita para vender ── */}
             <div className="border-b border-outline-variant/20">
                 <button
                     onClick={() => setSelectorOpen(o => !o)}
@@ -461,48 +469,57 @@ function CajaDropdownContent({
                                 </button>
                             ))
                         )}
-                        {!cajaForm ? (
-                            <button onClick={onShowForm} className="w-full pl-10 pr-4 py-2 flex items-center gap-2 hover:bg-surface-container text-[13px] text-secondary font-medium text-left transition-colors">
-                                <span className="material-symbols-outlined text-[16px]">add</span>
-                                Nueva caja
-                            </button>
-                        ) : (
-                            <div className="px-4 pt-1 pb-1 flex flex-col gap-2">
-                                <input
-                                    autoFocus value={newCajaName} onChange={onNameChange}
-                                    onKeyDown={e => e.key === 'Enter' && onCreate()}
-                                    placeholder="Ej. Caja Principal"
-                                    className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary"
-                                />
-                                {cajaError && <p className="text-error text-[11px]">{cajaError}</p>}
-                                <div className="flex gap-2">
-                                    <button onClick={onCancel} className="flex-1 py-1.5 text-[12px] text-on-surface-variant border border-outline-variant rounded-lg hover:bg-surface-container transition-colors">Cancelar</button>
-                                    <button onClick={onCreate} disabled={creating} className="flex-1 py-1.5 text-[12px] bg-secondary text-on-secondary rounded-lg font-medium hover:bg-secondary/90 transition-colors disabled:opacity-50">{creating ? '...' : 'Crear'}</button>
+
+                        {/* "Nueva caja" — solo quien puede administrar dispositivos/cajas */}
+                        {can('devices.manage') && (
+                            !cajaForm ? (
+                                <button onClick={onShowForm} className="w-full pl-10 pr-4 py-2 flex items-center gap-2 hover:bg-surface-container text-[13px] text-secondary font-medium text-left transition-colors">
+                                    <span className="material-symbols-outlined text-[16px]">add</span>
+                                    Nueva caja
+                                </button>
+                            ) : (
+                                <div className="px-4 pt-1 pb-1 flex flex-col gap-2">
+                                    <input
+                                        autoFocus value={newCajaName} onChange={onNameChange}
+                                        onKeyDown={e => e.key === 'Enter' && onCreate()}
+                                        placeholder="Ej. Caja Principal"
+                                        className="w-full px-3 py-2 bg-surface-container-low border border-outline-variant rounded-lg text-[13px] focus:outline-none focus:ring-1 focus:ring-secondary"
+                                    />
+                                    {cajaError && <p className="text-error text-[11px]">{cajaError}</p>}
+                                    <div className="flex gap-2">
+                                        <button onClick={onCancel} className="flex-1 py-1.5 text-[12px] text-on-surface-variant border border-outline-variant rounded-lg hover:bg-surface-container transition-colors">Cancelar</button>
+                                        <button onClick={onCreate} disabled={creating} className="flex-1 py-1.5 text-[12px] bg-secondary text-on-secondary rounded-lg font-medium hover:bg-secondary/90 transition-colors disabled:opacity-50">{creating ? '...' : 'Crear'}</button>
+                                    </div>
                                 </div>
-                            </div>
+                            )
                         )}
                     </div>
                 )}
             </div>
 
-            {/* ── Acciones principales ── */}
-            <button
-                onClick={onMovimiento}
-                disabled={!selectedCaja}
-                className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-surface-container text-[14px] font-medium text-on-surface text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-                <span className="material-symbols-outlined text-[20px] text-secondary">swap_vert</span>
-                Movimiento de caja
-            </button>
+            {/* ── Movimiento de caja — solo quien tiene caja.movement ── */}
+            {can('caja.movement') && (
+                <button
+                    onClick={onMovimiento}
+                    disabled={!selectedCaja}
+                    className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-surface-container text-[14px] font-medium text-on-surface text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    <span className="material-symbols-outlined text-[20px] text-secondary">swap_vert</span>
+                    Movimiento de caja
+                </button>
+            )}
 
-            <button
-                onClick={onCorte}
-                disabled={!selectedCaja}
-                className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-surface-container text-[14px] font-medium text-on-surface text-left transition-colors border-t border-outline-variant/10 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-                <span className="material-symbols-outlined text-[20px] text-secondary">point_of_sale</span>
-                Realizar corte
-            </button>
+            {/* ── Realizar corte — solo quien tiene corte.create ── */}
+            {can('corte.create') && (
+                <button
+                    onClick={onCorte}
+                    disabled={!selectedCaja}
+                    className="w-full px-4 py-3.5 flex items-center gap-3 hover:bg-surface-container text-[14px] font-medium text-on-surface text-left transition-colors border-t border-outline-variant/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    <span className="material-symbols-outlined text-[20px] text-secondary">point_of_sale</span>
+                    Realizar corte
+                </button>
+            )}
 
             {/* ── Abrir cajón — solo visible si hay impresora con cajón ── */}
             {hasDrawerPrinter && (
@@ -528,7 +545,9 @@ function CajaDropdownContent({
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   SerieDropdownContent — sin cambios
+   SerieDropdownContent — sin cambios (crear serie ya está gateado en el
+   backend con series.change; si quieres ocultarlo aquí también, dime y lo
+   agrego igual que arriba)
 ══════════════════════════════════════════════════════════════════════════ */
 function SerieDropdownContent({ series, selectedSerie, serieForm, newSerie, serieError, creating, onSelect, onShowForm, onSerieChange, onCancel, onCreate }) {
     return (

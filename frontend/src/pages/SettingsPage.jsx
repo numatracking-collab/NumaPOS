@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import BottomNav from '../components/BottomNav';
 import DevicesPanel from '../components/settings/DevicesPanel';
+import BusinessPanel from '../components/settings/BusinessPanel';
+import UsersPanel from '../components/settings/UsersPanel';
+
 
 const MENU_ITEMS = [
-  { id: 'business',  label: 'Negocio',      icon: 'store',           disabled: true  },
-  { id: 'devices',   label: 'Dispositivos', icon: 'devices',         disabled: false },
-  { id: 'users',     label: 'Usuarios',     icon: 'group',           disabled: true  },
-  { id: 'account',   label: 'Cuenta',       icon: 'manage_accounts', disabled: true  },
+  { id: 'business', label: 'Negocio', icon: 'store', disabled: false },
+  { id: 'devices', label: 'Dispositivos', icon: 'devices', disabled: false },
+  { id: 'users', label: 'Usuarios', icon: 'group', disabled: false },
+  { id: 'account', label: 'Cuenta', icon: 'manage_accounts', disabled: true },
 ];
 
 export default function SettingsPage() {
-  const [activeSection, setActiveSection] = useState('devices');
+  const [activeSection, setActiveSection] = useState('business');
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
@@ -98,7 +101,9 @@ export default function SettingsPage() {
 
         {/* Panel derecho */}
         <main className="flex-1 overflow-y-auto custom-scrollbar bg-background">
+          {activeSection === 'business' && <BusinessPanel />}
           {activeSection === 'devices' && <DevicesPanel />}
+          {activeSection === 'users' && <UsersPanel />}
         </main>
       </div>
 

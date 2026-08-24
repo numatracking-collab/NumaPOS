@@ -1,8 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { inventoryService } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 
 export default function InventoryDetailPanel({ product, onStockAdjusted, onBack, onEdit, onDelete }) {
+    const { user } = useAuth();
+    const can = (code) => user?.permissions?.includes(code);
+    const canViewCost   = can('product.view_cost');
+    const canViewStock  = can('product.view_stock');
+    const canEdit       = can('product.edit');
+    const canDelete     = can('product.delete');
+    const canAdjustInv  = can('inventory.adjust');
+
     const [adjustments, setAdjustments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [historyOpen, setHistoryOpen] = useState(false);
@@ -170,9 +179,10 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack,
                     </div>
                 )}
 
-                {/* ── Acciones siempre visibles: Eliminar / Editar / Ajustes de inventario ── */}
+                {/* ── Acciones siempre visibles: Eliminar / Editar / Ajustes de inventario ──
+                     Ahora cada una solo aparece si el usuario tiene el permiso correspondiente ── */}
                 <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-                    {onDelete && (
+                    {onDelete && canDelete && (
                         <button
                             onClick={() => setDeleteModalOpen(true)}
                             className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
@@ -182,7 +192,7 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack,
                         </button>
                     )}
 
-                    {onEdit && (
+                    {onEdit && canEdit && (
                         <button
                             onClick={() => onEdit(product)}
                             className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
@@ -192,46 +202,48 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack,
                         </button>
                     )}
 
-                    {/* 3-dot menu — ajustes de inventario */}
-                    <div className="relative" ref={menuRef}>
-                        <button
-                            onClick={() => setMenuOpen((v) => !v)}
-                            className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
-                            aria-label="Abrir opciones de ajuste de inventario"
-                            aria-expanded={menuOpen}
-                        >
-                            <span className="material-symbols-outlined text-[24px] text-on-surface">more_vert</span>
-                        </button>
+                    {/* 3-dot menu — ajustes de inventario, solo con inventory.adjust */}
+                    {canAdjustInv && (
+                        <div className="relative" ref={menuRef}>
+                            <button
+                                onClick={() => setMenuOpen((v) => !v)}
+                                className="w-11 h-11 rounded-full bg-white/95 border-2 border-outline-variant/40 flex items-center justify-center hover:bg-white transition-colors shadow-md"
+                                aria-label="Abrir opciones de ajuste de inventario"
+                                aria-expanded={menuOpen}
+                            >
+                                <span className="material-symbols-outlined text-[24px] text-on-surface">more_vert</span>
+                            </button>
 
-                        {menuOpen && (
-                            <div className="absolute right-0 top-12 w-64 max-w-[calc(100vw-24px)] bg-white border-2 border-outline-variant/40 rounded-xl shadow-2xl z-30 overflow-hidden py-1">
-                                <p className="px-4 pt-2.5 pb-2 text-xs font-bold text-outline uppercase tracking-widest border-b border-outline-variant/30">
-                                    Ajuste de inventario
-                                </p>
-                                <button
-                                    onClick={() => openAdjustModal('IN')}
-                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left"
-                                >
-                                    <span className="material-symbols-outlined text-[22px] text-tertiary">add_circle</span>
-                                    Registrar entrada (+)
-                                </button>
-                                <button
-                                    onClick={() => openAdjustModal('OUT')}
-                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
-                                >
-                                    <span className="material-symbols-outlined text-[22px] text-error">remove_circle</span>
-                                    Registrar salida (−)
-                                </button>
-                                <button
-                                    onClick={() => openAdjustModal('IN')}
-                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
-                                >
-                                    <span className="material-symbols-outlined text-[22px] text-secondary">tune</span>
-                                    Corrección de error
-                                </button>
-                            </div>
-                        )}
-                    </div>
+                            {menuOpen && (
+                                <div className="absolute right-0 top-12 w-64 max-w-[calc(100vw-24px)] bg-white border-2 border-outline-variant/40 rounded-xl shadow-2xl z-30 overflow-hidden py-1">
+                                    <p className="px-4 pt-2.5 pb-2 text-xs font-bold text-outline uppercase tracking-widest border-b border-outline-variant/30">
+                                        Ajuste de inventario
+                                    </p>
+                                    <button
+                                        onClick={() => openAdjustModal('IN')}
+                                        className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left"
+                                    >
+                                        <span className="material-symbols-outlined text-[22px] text-tertiary">add_circle</span>
+                                        Registrar entrada (+)
+                                    </button>
+                                    <button
+                                        onClick={() => openAdjustModal('OUT')}
+                                        className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
+                                    >
+                                        <span className="material-symbols-outlined text-[22px] text-error">remove_circle</span>
+                                        Registrar salida (−)
+                                    </button>
+                                    <button
+                                        onClick={() => openAdjustModal('IN')}
+                                        className="w-full flex items-center gap-3 px-4 py-3.5 text-base font-medium text-on-surface hover:bg-surface-container-low transition-colors text-left border-t border-outline-variant/20"
+                                    >
+                                        <span className="material-symbols-outlined text-[22px] text-secondary">tune</span>
+                                        Corrección de error
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -263,16 +275,18 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack,
                         </div>
                     </div>
 
-                    {/* Tarjeta de Precios */}
-                    <div className="flex flex-col sm:grid sm:grid-cols-2 gap-3 bg-surface-container-lowest border-2 border-outline-variant/30 rounded-xl p-4">
-                        <div className="border-b-2 sm:border-b-0 sm:border-r-2 border-outline-variant/30 pb-3 sm:pb-0 sm:pr-4">
-                            <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wide mb-1">Costo al proveedor</p>
-                            <p className="text-lg font-bold text-on-surface">
-                                ${Number(product.cost ?? 0).toFixed(2)}
-                                <span className="text-xs font-semibold text-outline ml-1">/ {unit}</span>
-                            </p>
-                        </div>
-                        <div className="sm:pl-2">
+                    {/* Tarjeta de Precios — costo solo con product.view_cost */}
+                    <div className={`flex flex-col ${canViewCost ? 'sm:grid sm:grid-cols-2' : ''} gap-3 bg-surface-container-lowest border-2 border-outline-variant/30 rounded-xl p-4`}>
+                        {canViewCost && (
+                            <div className="border-b-2 sm:border-b-0 sm:border-r-2 border-outline-variant/30 pb-3 sm:pb-0 sm:pr-4">
+                                <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wide mb-1">Costo al proveedor</p>
+                                <p className="text-lg font-bold text-on-surface">
+                                    ${Number(product.cost ?? 0).toFixed(2)}
+                                    <span className="text-xs font-semibold text-outline ml-1">/ {unit}</span>
+                                </p>
+                            </div>
+                        )}
+                        <div className={canViewCost ? 'sm:pl-2' : ''}>
                             <p className="text-xs font-bold text-secondary uppercase tracking-wide mb-1">Precio al público</p>
                             <p className="text-xl font-black text-secondary">
                                 ${Number(product.price ?? 0).toFixed(2)}
@@ -282,130 +296,137 @@ export default function InventoryDetailPanel({ product, onStockAdjusted, onBack,
                     </div>
                 </div>
 
-                {/* ── Conteo de stock ── */}
-                <div className="px-4 py-4 flex items-center justify-between border-b border-outline-variant/30 bg-surface flex-shrink-0">
-                    <div className="flex items-center gap-2.5 text-base font-bold text-on-surface-variant">
-                        <span className="material-symbols-outlined text-[26px]">package_2</span>
-                        <span className="hidden sm:inline">Existencia en tienda:</span>
-                        <span className="sm:hidden">Existencia:</span>
-                    </div>
-                    <div className="flex items-baseline gap-2">
-                        <span className="text-[38px] font-black text-on-surface leading-none">{stockDisplay}</span>
-                        <span className="text-sm font-bold text-outline">{unit}</span>
-                    </div>
-                </div>
+                {/* ── Conteo de stock — todo este bloque solo con product.view_stock ── */}
+                {canViewStock && (
+                    <>
+                        <div className="px-4 py-4 flex items-center justify-between border-b border-outline-variant/30 bg-surface flex-shrink-0">
+                            <div className="flex items-center gap-2.5 text-base font-bold text-on-surface-variant">
+                                <span className="material-symbols-outlined text-[26px]">package_2</span>
+                                <span className="hidden sm:inline">Existencia en tienda:</span>
+                                <span className="sm:hidden">Existencia:</span>
+                            </div>
+                            <div className="flex items-baseline gap-2">
+                                <span className="text-[38px] font-black text-on-surface leading-none">{stockDisplay}</span>
+                                <span className="text-sm font-bold text-outline">{unit}</span>
+                            </div>
+                        </div>
 
-                {/* ── Límites Mín / Máx ── */}
-                {(min !== null || max !== null) && (
-                    <div className="grid grid-cols-2 divide-x-2 divide-outline-variant/30 border-b border-outline-variant/30 flex-shrink-0 bg-surface-container-low">
-                        <div className="px-4 py-3.5 flex flex-col gap-1">
-                            <span className="text-xs font-bold text-outline-variant uppercase tracking-wider flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
-                                Mínimo permitido
-                            </span>
-                            <span className="text-xl font-black text-on-surface">
-                                {min !== null ? `${min} ${unit}` : 'No asignado'}
-                            </span>
-                        </div>
-                        <div className="px-4 py-3.5 flex flex-col gap-1">
-                            <span className="text-xs font-bold text-outline-variant uppercase tracking-wider flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
-                                Máximo permitido
-                            </span>
-                            <span className="text-xl font-black text-on-surface">
-                                {max !== null ? `${max} ${unit}` : 'No asignado'}
-                            </span>
-                        </div>
-                    </div>
+                        {/* ── Límites Mín / Máx ── */}
+                        {(min !== null || max !== null) && (
+                            <div className="grid grid-cols-2 divide-x-2 divide-outline-variant/30 border-b border-outline-variant/30 flex-shrink-0 bg-surface-container-low">
+                                <div className="px-4 py-3.5 flex flex-col gap-1">
+                                    <span className="text-xs font-bold text-outline-variant uppercase tracking-wider flex items-center gap-1">
+                                        <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+                                        Mínimo permitido
+                                    </span>
+                                    <span className="text-xl font-black text-on-surface">
+                                        {min !== null ? `${min} ${unit}` : 'No asignado'}
+                                    </span>
+                                </div>
+                                <div className="px-4 py-3.5 flex flex-col gap-1">
+                                    <span className="text-xs font-bold text-outline-variant uppercase tracking-wider flex items-center gap-1">
+                                        <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
+                                        Máximo permitido
+                                    </span>
+                                    <span className="text-xl font-black text-on-surface">
+                                        {max !== null ? `${max} ${unit}` : 'No asignado'}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Alertas de stock ── */}
+                        {isLowStock && (
+                            <div className="mx-4 my-3 px-4 py-3.5 rounded-xl bg-error-container flex items-start gap-3 flex-shrink-0 border border-error/20">
+                                <span className="material-symbols-outlined text-[22px] text-error mt-0.5">warning</span>
+                                <p className="text-sm font-bold text-on-error-container leading-snug">
+                                    ¡Atención! Hay muy {allowFractions ? 'poco' : 'pocas'} {unit} de este producto. Se recomienda surtir pronto.
+                                </p>
+                            </div>
+                        )}
+                        {isOverStock && (
+                            <div className="mx-4 my-3 px-4 py-3.5 rounded-xl bg-primary-container flex items-start gap-3 flex-shrink-0 border border-primary/20">
+                                <span className="material-symbols-outlined text-[22px] text-primary mt-0.5">info</span>
+                                <p className="text-sm font-bold text-on-primary-container leading-snug">
+                                    ¡Aviso! Tienes más {unit} de los recomendados ocupando espacio.
+                                </p>
+                            </div>
+                        )}
+                    </>
                 )}
 
-                {/* ── Alertas de stock ── */}
-                {isLowStock && (
-                    <div className="mx-4 my-3 px-4 py-3.5 rounded-xl bg-error-container flex items-start gap-3 flex-shrink-0 border border-error/20">
-                        <span className="material-symbols-outlined text-[22px] text-error mt-0.5">warning</span>
-                        <p className="text-sm font-bold text-on-error-container leading-snug">
-                            ¡Atención! Hay muy {allowFractions ? 'poco' : 'pocas'} {unit} de este producto. Se recomienda surtir pronto.
-                        </p>
-                    </div>
-                )}
-                {isOverStock && (
-                    <div className="mx-4 my-3 px-4 py-3.5 rounded-xl bg-primary-container flex items-start gap-3 flex-shrink-0 border border-primary/20">
-                        <span className="material-symbols-outlined text-[22px] text-primary mt-0.5">info</span>
-                        <p className="text-sm font-bold text-on-primary-container leading-snug">
-                            ¡Aviso! Tienes más {unit} de los recomendados ocupando espacio.
-                        </p>
-                    </div>
-                )}
-
-                {/* ── Historial de cambios ── */}
-                <div className="flex-shrink-0">
-                    <button
-                        onClick={() => setHistoryOpen((v) => !v)}
-                        className="w-full flex items-center justify-between px-4 py-4 border-y border-outline-variant/30 hover:bg-surface-container-low transition-colors"
-                        aria-expanded={historyOpen}
-                    >
-                        <div className="flex items-center gap-2.5 text-base font-bold text-on-surface">
-                            <span className="material-symbols-outlined text-[22px] text-on-surface-variant">history</span>
-                            Historial de cambios
-                            {adjustments.length > 0 && (
-                                <span className="text-xs bg-secondary-container text-on-secondary-container font-black px-2.5 py-1 rounded-full">
-                                    {adjustments.length}
-                                </span>
-                            )}
-                        </div>
-                        <span
-                            className="material-symbols-outlined text-[26px] text-outline transition-transform duration-200"
-                            style={{ transform: historyOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                {/* ── Historial de cambios — depende de inventory.adjust, ya que es
+                     el mismo permiso que controla ver/hacer ajustes de stock ── */}
+                {canAdjustInv && (
+                    <div className="flex-shrink-0">
+                        <button
+                            onClick={() => setHistoryOpen((v) => !v)}
+                            className="w-full flex items-center justify-between px-4 py-4 border-y border-outline-variant/30 hover:bg-surface-container-low transition-colors"
+                            aria-expanded={historyOpen}
                         >
-                            expand_more
-                        </span>
-                    </button>
+                            <div className="flex items-center gap-2.5 text-base font-bold text-on-surface">
+                                <span className="material-symbols-outlined text-[22px] text-on-surface-variant">history</span>
+                                Historial de cambios
+                                {adjustments.length > 0 && (
+                                    <span className="text-xs bg-secondary-container text-on-secondary-container font-black px-2.5 py-1 rounded-full">
+                                        {adjustments.length}
+                                    </span>
+                                )}
+                            </div>
+                            <span
+                                className="material-symbols-outlined text-[26px] text-outline transition-transform duration-200"
+                                style={{ transform: historyOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                            >
+                                expand_more
+                            </span>
+                        </button>
 
-                    {historyOpen && (
-                        <div>
-                            {loading ? (
-                                <div className="text-center text-on-surface-variant py-8 text-sm font-medium">
-                                    Cargando historial…
-                                </div>
-                            ) : adjustments.length === 0 ? (
-                                <div className="text-center text-outline-variant py-8 text-sm font-medium">
-                                    Aún no hay cambios registrados en este producto.
-                                </div>
-                            ) : (
-                                adjustments.map((adj) => {
-                                    // Mostrar cantidad con decimales limpios si el producto es fraccionable
-                                    const qtyDisplay = allowFractions
-                                        ? Number(adj.quantity).toFixed(3).replace(/\.?0+$/, '')
-                                        : adj.quantity;
-                                    return (
-                                        <div
-                                            key={adj.id}
-                                            className="flex items-center gap-3 px-4 py-3.5 border-b border-outline-variant/20 last:border-none"
-                                        >
-                                            <span className={`text-sm font-black px-2.5 py-1.5 rounded-lg shrink-0 min-w-[56px] text-center ${
-                                                adj.type === 'IN'
-                                                    ? 'bg-tertiary-container text-tertiary-dark'
-                                                    : 'bg-error-container text-error-dark'
-                                            }`}>
-                                                {adj.type === 'IN' ? '+' : '−'}{qtyDisplay}
-                                                <span className="text-[9px] font-semibold ml-0.5 opacity-70">{unit}</span>
-                                            </span>
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-bold text-on-surface capitalize truncate">{adj.reason}</p>
-                                                <p className="text-xs font-medium text-outline-variant mt-0.5">
-                                                    {new Date(adj.created_at).toLocaleString()}
-                                                </p>
+                        {historyOpen && (
+                            <div>
+                                {loading ? (
+                                    <div className="text-center text-on-surface-variant py-8 text-sm font-medium">
+                                        Cargando historial…
+                                    </div>
+                                ) : adjustments.length === 0 ? (
+                                    <div className="text-center text-outline-variant py-8 text-sm font-medium">
+                                        Aún no hay cambios registrados en este producto.
+                                    </div>
+                                ) : (
+                                    adjustments.map((adj) => {
+                                        // Mostrar cantidad con decimales limpios si el producto es fraccionable
+                                        const qtyDisplay = allowFractions
+                                            ? Number(adj.quantity).toFixed(3).replace(/\.?0+$/, '')
+                                            : adj.quantity;
+                                        return (
+                                            <div
+                                                key={adj.id}
+                                                className="flex items-center gap-3 px-4 py-3.5 border-b border-outline-variant/20 last:border-none"
+                                            >
+                                                <span className={`text-sm font-black px-2.5 py-1.5 rounded-lg shrink-0 min-w-[56px] text-center ${
+                                                    adj.type === 'IN'
+                                                        ? 'bg-tertiary-container text-tertiary-dark'
+                                                        : 'bg-error-container text-error-dark'
+                                                }`}>
+                                                    {adj.type === 'IN' ? '+' : '−'}{qtyDisplay}
+                                                    <span className="text-[9px] font-semibold ml-0.5 opacity-70">{unit}</span>
+                                                </span>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-bold text-on-surface capitalize truncate">{adj.reason}</p>
+                                                    <p className="text-xs font-medium text-outline-variant mt-0.5">
+                                                        {new Date(adj.created_at).toLocaleString()}
+                                                    </p>
+                                                </div>
+                                                <span className="text-xs font-bold text-outline-variant truncate max-w-[80px] shrink-0">
+                                                    {adj.user_name}
+                                                </span>
                                             </div>
-                                            <span className="text-xs font-bold text-outline-variant truncate max-w-[80px] shrink-0">
-                                                {adj.user_name}
-                                            </span>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-                    )}
-                </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* ── Modal de ajuste de inventario ── */}

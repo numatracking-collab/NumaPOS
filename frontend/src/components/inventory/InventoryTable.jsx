@@ -1,4 +1,17 @@
+import { useAuth } from '../../context/AuthContext';
+
 export default function InventoryTable({ products, onSelectProduct, selectedProductId, onEdit, onDelete }) {
+    const { user } = useAuth();
+    const can = (code) => user?.permissions?.includes(code);
+    const canViewStock = can('product.view_stock');
+    const canEdit       = can('product.edit');
+    const canDelete     = can('product.delete');
+    const showActions   = canEdit || canDelete;
+
+    const colCount = 4 /* Producto, SKU, Categoría, Precio */
+        + (canViewStock ? 1 : 0)
+        + (showActions ? 1 : 0);
+
     return (
         <div className="flex-1 overflow-y-auto custom-scrollbar p-lg bg-surface">
             <div className="bg-surface-container-lowest rounded-xl shadow-sm border border-outline-variant/30 overflow-hidden">
@@ -9,14 +22,14 @@ export default function InventoryTable({ products, onSelectProduct, selectedProd
                             <th className="py-md px-md">SKU</th>
                             <th className="py-md px-md">Categoría</th>
                             <th className="py-md px-md text-right">Precio</th>
-                            <th className="py-md px-md text-right">Stock</th>
-                            <th className="py-md px-md text-center">Acciones</th>
+                            {canViewStock && <th className="py-md px-md text-right">Stock</th>}
+                            {showActions && <th className="py-md px-md text-center">Acciones</th>}
                         </tr>
                     </thead>
                     <tbody className="text-[14px] text-on-surface divide-y divide-outline-variant/30">
                         {products.length === 0 ? (
                             <tr>
-                                <td colSpan="6" className="py-xl text-center text-on-surface-variant">
+                                <td colSpan={colCount} className="py-xl text-center text-on-surface-variant">
                                     No hay productos. Agrega uno nuevo.
                                 </td>
                             </tr>
@@ -48,29 +61,37 @@ export default function InventoryTable({ products, onSelectProduct, selectedProd
                                         <td className="py-sm px-md text-right font-medium text-secondary">
                                             ${Number(product.price).toFixed(2)}
                                         </td>
-                                        <td className="py-sm px-md text-right">
-                                            <span className={`inline-flex items-center justify-center min-w-[32px] px-2 py-1 rounded font-bold text-[12px] ${isLowStock ? 'bg-error-container text-on-error-container' : 'bg-surface-container-high text-on-surface'}`}>
-                                                {product.stock}
-                                            </span>
-                                        </td>
-                                        <td className="py-sm px-md text-center">
-                                            <div className="flex items-center justify-center gap-2">
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); onEdit(product); }}
-                                                    className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-secondary transition-colors"
-                                                    title="Editar"
-                                                >
-                                                    <span className="material-symbols-outlined text-[18px]">edit</span>
-                                                </button>
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); onDelete(product); }}
-                                                    className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-error-container hover:text-error transition-colors"
-                                                    title="Eliminar"
-                                                >
-                                                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                                                </button>
-                                            </div>
-                                        </td>
+                                        {canViewStock && (
+                                            <td className="py-sm px-md text-right">
+                                                <span className={`inline-flex items-center justify-center min-w-[32px] px-2 py-1 rounded font-bold text-[12px] ${isLowStock ? 'bg-error-container text-on-error-container' : 'bg-surface-container-high text-on-surface'}`}>
+                                                    {product.stock}
+                                                </span>
+                                            </td>
+                                        )}
+                                        {showActions && (
+                                            <td className="py-sm px-md text-center">
+                                                <div className="flex items-center justify-center gap-2">
+                                                    {canEdit && (
+                                                        <button 
+                                                            onClick={(e) => { e.stopPropagation(); onEdit(product); }}
+                                                            className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-secondary transition-colors"
+                                                            title="Editar"
+                                                        >
+                                                            <span className="material-symbols-outlined text-[18px]">edit</span>
+                                                        </button>
+                                                    )}
+                                                    {canDelete && (
+                                                        <button 
+                                                            onClick={(e) => { e.stopPropagation(); onDelete(product); }}
+                                                            className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-error-container hover:text-error transition-colors"
+                                                            title="Eliminar"
+                                                        >
+                                                            <span className="material-symbols-outlined text-[18px]">delete</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        )}
                                     </tr>
                                 );
                             })

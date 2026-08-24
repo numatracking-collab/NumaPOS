@@ -56,7 +56,16 @@ export function useProductCatalog() {
     const knownVersion   = useRef(readCache(CACHE_VERSION_KEY) ?? '');
     const isRefreshing   = useRef(false); // evita refrescos paralelos
 
-    useEffect(() => () => { isMounted.current = false; }, []);
+    // IMPORTANTE: se resetea a true en cada montaje, no solo se inicializa una
+    // vez. Con StrictMode (dev), React monta → desmonta → vuelve a montar el
+    // componente; el useRef(true) inicial NUNCA se re-ejecuta en el segundo
+    // montaje, así que si solo poníamos isMounted.current=false en el cleanup,
+    // se quedaba en false para siempre y el fetch en curso nunca llegaba a
+    // hacer setLoading(false) — eso era la "carga infinita" del catálogo.
+    useEffect(() => {
+        isMounted.current = true;
+        return () => { isMounted.current = false; };
+    }, []);
 
     /* ── Refresco completo ────────────────────────────────────────────────── */
     const refresh = useCallback(async (showSpinner = false) => {
