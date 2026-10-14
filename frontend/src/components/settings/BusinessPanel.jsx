@@ -11,6 +11,7 @@ export default function BusinessPanel() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     getBusinessSettings()
@@ -21,6 +22,10 @@ export default function BusinessPanel() {
         address: data.address ?? '',
         logo_url: data.logo_url ?? null,
       }))
+      .catch(err => {
+        console.error('[BusinessPanel] load error:', err);
+        setError(err?.response?.data?.error || err?.message || 'No se pudieron cargar los datos del negocio');
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -34,6 +39,7 @@ export default function BusinessPanel() {
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
+    setError('');
     try {
       let logo_url = form.logo_url;
       if (logoFile) {
@@ -46,7 +52,10 @@ export default function BusinessPanel() {
       setIsEditing(false);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      console.error(err);
+      console.error('[BusinessPanel] save error:', err);
+      const status = err?.response?.status ?? err?.status;
+      const msg = err?.response?.data?.error || err?.message || 'Error desconocido';
+      setError(status ? `${msg} (código ${status})` : msg);
     } finally {
       setSaving(false);
     }
@@ -67,6 +76,12 @@ export default function BusinessPanel() {
           </p>
         )}
       </div>
+
+      {error && (
+        <div className="bg-error-container text-on-error-container border border-error/30 rounded-lg px-3 py-2 text-[12px]">
+          {error}
+        </div>
+      )}
 
       {/* Card */}
       <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 md:p-6 relative flex flex-col gap-5">
@@ -113,7 +128,7 @@ export default function BusinessPanel() {
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => { setIsEditing(false); setLogoFile(null); setLogoPreview(null); }}
+              onClick={() => { setIsEditing(false); setLogoFile(null); setLogoPreview(null); setError(''); }}
               className="px-4 py-2 text-[13px] font-medium text-on-surface-variant
                          rounded-lg hover:bg-surface-container active:scale-95 transition-all"
             >

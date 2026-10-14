@@ -1,49 +1,48 @@
 import { useEffect, useState } from 'react';
 import { appUpdatesService } from '../services/api';
-import { APP_VERSION } from '../config/appVersion';
+import { getCurrentVersion, isNewerVersion } from '../config/appVersion';
+import { isWeb, isElectron } from '../services/runtimeEnv';
 
 const DISMISSED_KEY = 'numa_pos_dismissed_update_version';
 export { DISMISSED_KEY };
-
-// Quita espacios y prefijo "v" → "v1.6.4 " pasa a "1.6.4"
-const normalizeVersion = (v) => String(v ?? '').trim().replace(/^v/i, '');
-
-// true solo si `remote` es estrictamente mayor que `local` (comparación semver simple)
-const isNewerVersion = (remote, local) => {
-    const r = normalizeVersion(remote).split('.').map(n => parseInt(n, 10) || 0);
-    const l = normalizeVersion(local).split('.').map(n => parseInt(n, 10) || 0);
-    const len = Math.max(r.length, l.length);
-    for (let i = 0; i < len; i++) {
-        const diff = (r[i] || 0) - (l[i] || 0);
-        if (diff > 0) return true;
-        if (diff < 0) return false;
-    }
-    return false;
-};
 
 export default function UpdateNotice() {
     const [update, setUpdate] = useState(null);
     const [dismissed, setDismissed] = useState(false);
 
     useEffect(() => {
-        appUpdatesService.getLatest()
-            .then(({ update }) => {
-                if (!update) return;
+        // En web nunca se consulta ni se muestra nada
+        if (isWeb()) return;
 
-                // Debug temporal: quítalo cuando confirmes el problema
-                console.log('[UpdateNotice] remota:', JSON.stringify(update.version), 'local:', JSON.stringify(APP_VERSION));
+        let cancelled = false;
 
-                if (!isNewerVersion(update.version, APP_VERSION)) return;
+        (async () => {
+            try {
+                const current = await getCurrentVersion();
+                if (!current) return; // sin versión confiable → no molestamos
 
-                const alreadyDismissed = sessionStorage.getItem(DISMISSED_KEY) === update.version;
-                if (alreadyDismissed && !update.is_mandatory) return;
+                const res = await appUpdatesService.getLatest(current);
+                const latest = res?.update;
+                if (!latest || cancelled) return;
 
-                setUpdate(update);
-            })
-            .catch(err => console.error('Error al checar actualizaciones:', err));
+                if (!isNewerVersion(latest.version, current)) return;
+
+                const alreadyDismissed = sessionStorage.getItem(DISMISSED_KEY) === latest.version;
+                if (alreadyDismissed && !latest.is_mandatory) return;
+
+                setUpdate(latest);
+            } catch (err) {
+                console.error('Error al checar actualizaciones:', err);
+            }
+        })();
+
+        return () => { cancelled = true; };
     }, []);
 
     if (!update || dismissed) return null;
+
+    // Electron usa installer_url si existe; si no, cae a apk_url
+    const downloadUrl = (isElectron() && update.installer_url) || update.apk_url;
 
     const handleDismiss = () => {
         sessionStorage.setItem(DISMISSED_KEY, update.version);
@@ -51,7 +50,7 @@ export default function UpdateNotice() {
     };
 
     const handleDownload = () => {
-        window.open(update.apk_url, '_blank');
+        if (downloadUrl) window.open(downloadUrl, '_blank');
     };
 
     // ── Obligatoria: modal bloqueante, no descartable ──────────────────────

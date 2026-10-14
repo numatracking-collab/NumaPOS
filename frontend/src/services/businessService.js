@@ -16,6 +16,19 @@ function getToken() {
 
 let _cache = null;
 
+/* Llamar al cerrar sesión para no mostrar datos de otro tenant */
+export function clearBusinessCache() {
+    _cache = null;
+}
+
+/* Construye un Error con el mensaje del servidor y el código HTTP */
+async function buildHttpError(res) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || `Error ${res.status}`);
+    err.status = res.status;
+    return err;
+}
+
 /* ── GET /api/business ──────────────────────────────────────────────── */
 export async function getBusinessSettings(force = false) {
     if (_cache && !force) return _cache;
@@ -27,10 +40,8 @@ export async function getBusinessSettings(force = false) {
             Authorization: `Bearer ${getToken()}`,
         },
     });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Error ${res.status}`);
-    }
+    if (!res.ok) throw await buildHttpError(res);
+
     const data = await res.json();
     _cache = data;
     return data;
@@ -46,10 +57,8 @@ export async function saveBusinessSettings(payload) {
         },
         body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Error ${res.status}`);
-    }
+    if (!res.ok) throw await buildHttpError(res);
+
     const data = await res.json();
     _cache = data;
     return data;
@@ -73,10 +82,8 @@ export async function uploadLogo(file) {
         },
         body: formData,
     });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Error ${res.status}`);
-    }
+    if (!res.ok) throw await buildHttpError(res);
+
     const data = await res.json();
     return data.urls[0];
 }
