@@ -5,6 +5,22 @@ import { APP_VERSION } from '../config/appVersion';
 const DISMISSED_KEY = 'numa_pos_dismissed_update_version';
 export { DISMISSED_KEY };
 
+// Quita espacios y prefijo "v" → "v1.6.4 " pasa a "1.6.4"
+const normalizeVersion = (v) => String(v ?? '').trim().replace(/^v/i, '');
+
+// true solo si `remote` es estrictamente mayor que `local` (comparación semver simple)
+const isNewerVersion = (remote, local) => {
+    const r = normalizeVersion(remote).split('.').map(n => parseInt(n, 10) || 0);
+    const l = normalizeVersion(local).split('.').map(n => parseInt(n, 10) || 0);
+    const len = Math.max(r.length, l.length);
+    for (let i = 0; i < len; i++) {
+        const diff = (r[i] || 0) - (l[i] || 0);
+        if (diff > 0) return true;
+        if (diff < 0) return false;
+    }
+    return false;
+};
+
 export default function UpdateNotice() {
     const [update, setUpdate] = useState(null);
     const [dismissed, setDismissed] = useState(false);
@@ -13,7 +29,11 @@ export default function UpdateNotice() {
         appUpdatesService.getLatest()
             .then(({ update }) => {
                 if (!update) return;
-                if (update.version === APP_VERSION) return;
+
+                // Debug temporal: quítalo cuando confirmes el problema
+                console.log('[UpdateNotice] remota:', JSON.stringify(update.version), 'local:', JSON.stringify(APP_VERSION));
+
+                if (!isNewerVersion(update.version, APP_VERSION)) return;
 
                 const alreadyDismissed = sessionStorage.getItem(DISMISSED_KEY) === update.version;
                 if (alreadyDismissed && !update.is_mandatory) return;
