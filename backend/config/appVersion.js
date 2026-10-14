@@ -4,5 +4,4 @@
 // que pongas en el campo "Versión" al publicar en el panel admin
 // (NUMA Admin → Actualizaciones → Publicar versión).
 // ─────────────────────────────────────────────────────────────────────────────
-export const APP_VERSION = '1.4.0';
- 
+export const APP_VERSION = '1.6.3';
