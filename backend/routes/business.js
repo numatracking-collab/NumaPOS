@@ -40,8 +40,9 @@ router.get('/', async (req, res) => {
 // PUT /api/business — Crear/actualizar datos del negocio del tenant actual
 // Upsert atómico vía ON CONFLICT (tenant_id) para evitar condiciones de carrera
 // entre el SELECT y el INSERT que tenía la versión anterior.
+// Permiso: 'business.settings' (el código que existe en la tabla permissions).
 // ─────────────────────────────────────────────────────────────────────────────
-router.put('/', requirePermission('business.edit'), async (req, res) => {
+router.put('/', requirePermission('business.settings'), async (req, res) => {
     try {
         const { tenantId: tenant_id } = req.user;
         const { business_name, logo_url, phone, email, address, ticket_config } = req.body;
